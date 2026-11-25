@@ -994,7 +994,267 @@ def step10():
                          memseeker.LinuxBackend))
 
 
-# --- CLI bits: --map, --list-rules, --version, doctor --------------------
+# --- Step 11 — v1.3: long regex overlap, modifiers, entropy threshold,
+# map-change detection, watch groups, backend --map ----------------------
+def step11():
+    print("\nStep 11 — v1.3: regex overlap, modifiers, entropy, map change, watch groups")
+    from unittest import mock
+    import io
+    from contextlib import redirect_stdout
+    from types import SimpleNamespace
+
+    def write_rules(body):
+        fh = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False)
+        fh.write(body)
+        fh.close()
+        return fh.name
+
+    # --- Long regex matches straddling a chunk boundary ------------------
+    # A 2000-byte match straddling the 4096 boundary (far past the old
+    # 512-byte bound) and a 1500-byte match inside one chunk.
+    blob = bytearray(b"\x00" * 12288)
+    blob[3500:5500] = b"B" * 2000
+    blob[6500:8000] = b"B" * 1500
+    with tempfile.TemporaryDirectory() as td:
+        img_path = os.path.join(td, "long.bin")
+        open(img_path, "wb").write(bytes(blob))
+        path = write_rules("[LongRun]\ntype = regex\n"
+                           "pattern = B{1500,}\n")
+        try:
+            rules = memseeker.load_rules(path)
+            check("regex: a regex rule keeps 8191 bytes of overlap "
+                  "(default chunk)",
+                  memseeker.overlap_size(rules) == 8191,
+                  f"overlap={memseeker.overlap_size(rules)}")
+            check("regex: the overlap is capped by the chunk size",
+                  memseeker.overlap_size(rules, chunk_size=64) == 63)
+            res = memseeker.scan_image(img_path, rules,
+                                       opts(path, chunk_size=4096))
+            addrs = sorted(h.address for h in res.hits)
+            check("regex: a 2000-byte match straddling a chunk boundary "
+                  "is found (past the old 512 bound)",
+                  3500 in addrs, f"addrs={addrs}")
+            check("regex: a 1500-byte match inside one chunk is found",
+                  6500 in addrs, f"addrs={addrs}")
+            check("regex: each long match is found exactly once",
+                  len(res.hits) == 2, f"hits={len(res.hits)}")
+            lens = sorted(len(h.match) for h in res.hits)
+            check("regex: the reported matches are 2000 and 1500 bytes",
+                  lens == [1500, 2000], f"lens={lens}")
+        finally:
+            os.unlink(path)
+
+    # --- String modifiers: nocase + wide --------------------------------
+    data = bytearray(b"\x00" * 4096)
+    data[100:107] = b"HuNtEr2"                       # mixed case
+    data[500:514] = "hunter2".encode("utf-16-le")    # wide
+    data[1000:1007] = b"hunter2"                     # plain
+    with tempfile.TemporaryDirectory() as td:
+        img_path = os.path.join(td, "mods.bin")
+        open(img_path, "wb").write(bytes(data))
+        path = write_rules(
+            "[NocasePw]\ntype = string\npattern = hunter2\n"
+            "nocase = true\n\n"
+            "[WidePw]\ntype = string\npattern = hunter2\nwide = true\n\n"
+            "[PlainPw]\ntype = string\npattern = hunter2\n")
+        try:
+            rules = memseeker.load_rules(path)
+            res = memseeker.scan_image(img_path, rules, opts(path))
+            by_rule = {}
+            for h in res.hits:
+                by_rule.setdefault(h.rule.name, []).append(h)
+            check("mods: nocase matches the mixed-case and plain forms",
+                  sorted(h.address for h in by_rule.get("NocasePw", []))
+                  == [100, 1000],
+                  f"{[h.address for h in by_rule.get('NocasePw', [])]}")
+            check("mods: the nocase hit keeps its original case",
+                  any(h.match == b"HuNtEr2"
+                      for h in by_rule.get("NocasePw", [])))
+            check("mods: wide matches the UTF-16LE encoding",
+                  [h.address for h in by_rule.get("WidePw", [])] == [500])
+            check("mods: wide match bytes are the UTF-16LE encoding",
+                  bool(by_rule.get("WidePw"))
+                  and by_rule["WidePw"][0].match
+                  == "hunter2".encode("utf-16-le"))
+            check("mods: a plain rule matches neither mixed-case nor wide",
+                  [h.address for h in by_rule.get("PlainPw", [])] == [1000])
+            # --list-rules shows the modifiers.
+            r = run_tool(["--list-rules", "--rules", path, "--no-color"])
+            check("mods: --list-rules shows nocase and wide",
+                  r.returncode == 0 and "nocase" in r.stdout
+                  and "wide" in r.stdout, r.stdout[:200])
+        finally:
+            os.unlink(path)
+        # Bad modifiers are clean errors that name the rule.
+        for label, body, needle in (
+                ("nocase on a hex rule",
+                 "[BadHex]\ntype = hex\npattern = de ad\nnocase = true\n",
+                 "BadHex"),
+                ("bad nocase value",
+                 "[BadBool]\ntype = string\npattern = hunter2\n"
+                 "nocase = maybe\n", "BadBool")):
+            path = write_rules(body)
+            try:
+                try:
+                    memseeker.load_rules(path)
+                    raised = False
+                except memseeker.MemSeekerError as exc:
+                    raised = needle in str(exc)
+                check(f"mods: {label} errors cleanly and names the rule",
+                      raised)
+            finally:
+                os.unlink(path)
+
+    # --- Tunable entropy threshold ---------------------------------------
+    # One 64 KiB chunk of random bytes (~8.0 bits/byte) + one of plain
+    # text (~4 bits/byte): deterministic, no live process needed.
+    img = os.urandom(65536) + (b"hello world this is plain text "
+                               * 2200)[:65536]
+    with tempfile.TemporaryDirectory() as td:
+        img_path = os.path.join(td, "ent.bin")
+        open(img_path, "wb").write(img)
+        rules = memseeker.load_rules(RULES_LAB)
+        dopts = opts(chunk_size=65536, entropy=True)
+        res = memseeker.scan_image(img_path, rules, dopts)
+        check("entropy: default threshold 7.5 flags the random chunk",
+              len(res.entropy_flags) == 1
+              and res.entropy_flags[0][2] > 7.9,
+              f"flags={res.entropy_flags}")
+        check("entropy: the report names the 7.5 threshold",
+              ">= 7.5" in memseeker.build_text_report(res, rules))
+        dopts8 = opts(chunk_size=65536, entropy=True)
+        dopts8["entropy_threshold"] = 8.0
+        res8 = memseeker.scan_image(img_path, rules, dopts8)
+        check("entropy: threshold 8.0 flags nothing (random data is "
+              "below 8.0 bits/byte)",
+              len(res8.entropy_flags) == 0)
+        check("entropy: the result and report carry the 8.0 threshold",
+              res8.entropy_threshold == 8.0
+              and "Entropy threshold: 8.0" in
+              memseeker.build_text_report(res8, rules))
+        check("entropy: the JSON report carries the threshold",
+              json.loads(memseeker.build_json_report(res8, rules))
+              .get("entropy_threshold_bits_per_byte") == 8.0)
+        # CLI: a threshold outside 0-8 is a clean error; a valid one
+        # reaches the report.
+        r = run_tool(["--image", img_path, "--rules", RULES_LAB,
+                      "--entropy", "--entropy-threshold", "9",
+                      "--no-color", "-q"])
+        check("entropy: CLI threshold 9 is a clean error (exit 2)",
+              r.returncode == 2 and "entropy-threshold" in r.stdout
+              and "Traceback" not in r.stdout,
+              r.stdout.strip()[-160:])
+        rep = os.path.join(td, "ent.txt")
+        r = run_tool(["--image", img_path, "--rules", RULES_LAB,
+                      "--entropy", "--entropy-threshold", "8.0",
+                      "-o", rep, "--no-color", "-q"])
+        check("entropy: CLI --entropy-threshold 8.0 writes the "
+              "threshold into the report",
+              r.returncode == 0 and os.path.isfile(rep)
+              and "Entropy threshold: 8.0" in open(rep).read(),
+              f"exit={r.returncode}")
+
+    # --- Map-change detection (mocked re-read) ---------------------------
+    proc, info = start_lab()
+    try:
+        pid = info["pid"]
+        rules = memseeker.load_rules(RULES_LAB)
+        regions = memseeker.parse_maps(pid)
+        # The re-read returns a map with the last region grown: the
+        # scan must notice and say so in the report.
+        grown = list(regions)
+        last = grown[-1]
+        grown[-1] = memseeker.Region(last.start, last.end + 0x1000,
+                                     last.perms, last.offset, last.dev,
+                                     last.inode, last.pathname)
+        with mock.patch.object(memseeker.LinuxBackend, "list_regions",
+                               side_effect=[regions, grown]):
+            res = memseeker.scan_process(pid, rules, opts(),
+                                         backend=memseeker.LinuxBackend())
+        check("mapchange: a changed map is detected after the scan",
+              res.map_changed is True)
+        check("mapchange: the text report says the map changed",
+              "Map changed during scan: yes" in
+              memseeker.build_text_report(res, rules))
+        check("mapchange: the JSON report carries map_changed=true",
+              json.loads(memseeker.build_json_report(res, rules))
+              .get("map_changed") is True)
+        # The re-read fails (process exited): same flag, no crash.
+        with mock.patch.object(memseeker.LinuxBackend, "list_regions",
+                               side_effect=[regions,
+                                            memseeker.MemSeekerError(
+                                                "No process with PID "
+                                                f"{pid}.")]):
+            res2 = memseeker.scan_process(pid, rules, opts(),
+                                          backend=memseeker.LinuxBackend())
+        check("mapchange: a map that cannot be re-read is reported, "
+              "not a crash",
+              res2.map_changed is True
+              and "could not be re-read" in res2.map_note)
+        # Unchanged map: no flag.
+        res3 = memseeker.scan_process(pid, rules, opts())
+        check("mapchange: an unchanged map is not flagged",
+              res3.map_changed is False
+              and json.loads(memseeker.build_json_report(res3, rules))
+              .get("map_changed") is False)
+    finally:
+        stop_lab(proc)
+
+    # --- Watch mode honours rule groups ----------------------------------
+    proc, info = start_lab()
+    try:
+        pid = info["pid"]
+        path = write_rules(
+            "[MemMarkerAlpha]\ntype = string\n"
+            "pattern = MEMSEEKER_MARKER_ALPHA\n\n"
+            "[LeakedPassword]\ntype = string\npattern = hunter2\n\n"
+            "[ApiKeyPattern]\ntype = regex\n"
+            "pattern = sk-[A-Za-z0-9]{20,}\n\n"
+            "[Group:Pair]\ncondition = 2 of (MemMarkerAlpha, "
+            "LeakedPassword, ApiKeyPattern)\n")
+        try:
+            wopts = {"rules_path": path, "chunk_size": 65536,
+                     "entropy": False, "strings": False,
+                     "output": "test_out.txt"}
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = memseeker.watch_process(
+                    pid, memseeker.load_rules(path), wopts,
+                    interval=1, rounds=1)
+            out = buf.getvalue()
+            check("watch: watch mode ends cleanly after 1 round",
+                  rc == 0, f"rc={rc}")
+            check("watch: the group fires inside watch mode (groups "
+                  "are no longer ignored)",
+                  "Pair" in out, out[-400:])
+        finally:
+            os.unlink(path)
+    finally:
+        stop_lab(proc)
+
+    # --- --map through the platform backend (mocked Windows) -------------
+    fake_backend = mock.Mock()
+    fake_backend.check_ownership.return_value = 4242
+    fake_backend.list_regions.return_value = [
+        memseeker.Region(0x10000, 0x11000, "r--p", 0, "0:0", 0,
+                         "C:\\test.exe"),
+        memseeker.Region(0x20000, 0x21000, "rw-p", 0, "0:0", 0, ""),
+    ]
+    fake_backend.process_name.return_value = "notepad.exe"
+    with mock.patch.object(memseeker, "get_backend",
+                           return_value=fake_backend):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = memseeker.do_map(SimpleNamespace(pid=[]), pid=4242)
+        out = buf.getvalue()
+        check("map: --map works through the platform backend "
+              "(Windows regions listed)",
+              rc == 0 and "notepad.exe" in out
+              and "000000010000" in out and "test.exe" in out,
+              out[:200])
+        check("map: the backend's ownership check was used",
+              fake_backend.check_ownership.called
+              and fake_backend.list_regions.called)
 def step_cli_bits():
     print("\nCLI bits — --map, --list-rules, --version, doctor")
     r = run_tool(["--list-rules", "--rules", RULES_LAB, "--no-color"])
@@ -1005,7 +1265,7 @@ def step_cli_bits():
                    "ApiKeyPattern", "StraddleMarker")),
           r.stdout[:200])
     r = run_tool(["--version"])
-    check("cli: --version prints 1.2", "1.2" in r.stdout)
+    check("cli: --version prints 1.3", "1.3" in r.stdout)
     r = run_tool(["--doctor", "--no-color"])
     check("cli: banner shows the authorized-use disclaimer",
           "DISCLAIMER" in r.stdout
@@ -1027,7 +1287,7 @@ def main():
     print("MemSeeker step tests")
     print("=" * 58)
     for step in (step1, step2, step3, step4, step5, step6, step7, step8,
-                 step_cli_bits, step9, step10):
+                 step_cli_bits, step9, step10, step11):
         try:
             step()
         except Exception as exc:  # noqa: BLE001 - one step's crash

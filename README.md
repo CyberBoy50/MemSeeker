@@ -445,3 +445,5 @@ The tool states this responsibility explicitly, in the banner and in
 every report it writes:
 
 > DISCLAIMER — AUTHORIZED USE ONLY. This tool was built for ethical, authorized security testing only. You are using it on your own responsibility. The authors are not responsible for how you use it, or for anything that happens because of your use. Only test systems, code, and data you own or have explicit written permission to test — testing anything else may be illegal (for example, PECA 2016 in Pakistan).
+
+License: MIT — see LICENSE
