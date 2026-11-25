@@ -1,0 +1,39 @@
+# MemSeeker group rules (v1.1) — YARA-style conditions over member rules.
+# A [Group:Name] section fires as ONE finding when its condition is met
+# by the rules that fired in ONE region. The group finding carries the
+# group name, and points at the earliest member hit in that region.
+#
+#   condition = 2 of (RuleA, RuleB, RuleC)
+#   condition = all of (RuleA, RuleB)
+#   condition = any of (RuleA, RuleB)
+#
+# The member rules below are the lab markers (see lab_proc.py): all
+# three fire in the lab's anonymous heap region, so all three groups
+# below fire there too — one finding per group.
+
+[MemMarkerAlpha]
+type = string
+pattern = MEMSEEKER_MARKER_ALPHA
+description = Planted lab marker (plain string)
+
+[LeakedPassword]
+type = string
+pattern = hunter2
+description = Plaintext password left in process memory
+
+[ApiKeyPattern]
+type = regex
+pattern = sk-[A-Za-z0-9]{20,}
+description = API key pattern (sk- followed by 20+ characters)
+
+[Group:SecretPair]
+condition = 2 of (MemMarkerAlpha, LeakedPassword, ApiKeyPattern)
+description = Two or more secret markers in the same region
+
+[Group:AnySecret]
+condition = any of (MemMarkerAlpha, LeakedPassword, ApiKeyPattern)
+description = Any secret marker in the region
+
+[Group:AllSecrets]
+condition = all of (MemMarkerAlpha, LeakedPassword, ApiKeyPattern)
+description = All three secret markers in the same region

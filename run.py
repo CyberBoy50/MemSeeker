@@ -5,16 +5,18 @@ Usage:
     python run.py setup        # create venv (first time only)
     python run.py lab          # start the lab process (prints its PID)
     python run.py scan <pid> --rules rules_lab.txt   # scan a process
+    python run.py scanall      # scan every process you own
+    python run.py image <file> --rules rules_lab.txt # scan a dump file
     python run.py labscan      # start the lab AND scan it (one step)
-    python run.py test         # run the 8 build-plan step tests
+    python run.py test         # run the 10 build-plan step tests
     python run.py doctor       # check the setup
     python run.py menu         # open the numbered menu
 
-Linux only — MemSeeker reads /proc, which Windows and macOS do not
-have. Run it on Kali Linux (or any Linux VM). Works on Windows
-(venv\\Scripts\\python.exe), macOS and Linux (venv/bin/python) only
-as far as the launcher goes; the tool itself needs Linux.
-Plain `python3 memseeker.py` also works (standard library only).
+Cross-platform (v1.1): Linux (/proc), Windows (kernel32 via ctypes)
+and macOS (task_for_pid + vm_read via ctypes). The lab process and
+the --lab / labscan commands need Linux, where the lab runs; the
+--image mode works on every OS. Plain `python3 memseeker.py` also
+works (standard library only).
 """
 import os
 import subprocess
@@ -73,6 +75,18 @@ def cmd_scan(args):
     return run([vp, os.path.join(HERE, "memseeker.py")] + args).returncode
 
 
+def cmd_scanall(args):
+    vp = venv_python() or sys.executable
+    return run([vp, os.path.join(HERE, "memseeker.py"), "--all"]
+               + args).returncode
+
+
+def cmd_image(args):
+    vp = venv_python() or sys.executable
+    return run([vp, os.path.join(HERE, "memseeker.py"), "--image"]
+               + args).returncode
+
+
 def cmd_labscan(args):
     vp = venv_python() or sys.executable
     return run([vp, os.path.join(HERE, "memseeker.py"), "--lab"]
@@ -105,6 +119,10 @@ def main():
         return cmd_lab(args)
     if cmd == "scan":
         return cmd_scan(args)
+    if cmd == "scanall":
+        return cmd_scanall(args)
+    if cmd == "image":
+        return cmd_image(args)
     if cmd == "labscan":
         return cmd_labscan(args)
     if cmd == "test":

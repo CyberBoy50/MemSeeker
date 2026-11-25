@@ -480,6 +480,516 @@ def step8():
         stop_lab(proc)
 
 
+# --- Step 9 — v1.1: multi-PID, image, dump, groups -----------------------
+def step9():
+    print("\nStep 9 — v1.1: multi-PID, image, dump, groups")
+    proc1, info1 = start_lab()
+    proc2, info2 = start_lab()
+    try:
+        rules = memseeker.load_rules(RULES_LAB)
+        # --all: scan every process we own; both labs must appear with
+        # exactly their 5 lab hits, all in the anonymous heap region.
+        results, skipped = memseeker.scan_all(rules, opts())
+        by_pid = {r.pid: r for r in results}
+        check("all: both lab processes appear in the --all results",
+              info1["pid"] in by_pid and info2["pid"] in by_pid,
+              f"pids={sorted(by_pid)[:8]}")
+        for label, info in (("lab 1", info1), ("lab 2", info2)):
+            res = by_pid.get(info["pid"])
+            check(f"all: {label} has all five lab hits",
+                  res is not None and len(res.hits) == 5,
+                  f"hits={len(res.hits) if res else None}")
+            if res is not None:
+                regions = memseeker.parse_maps(info["pid"])
+                check(f"all: {label} hits are in the anonymous heap",
+                      all(region_of(regions, h.address).name == "[anon]"
+                          for h in res.hits))
+        check("all: unreadable processes are skipped, not fatal",
+              len(skipped) >= 1,
+              f"skipped={len(skipped)}")
+        # --pids: exactly the two labs.
+        results2, skipped2 = memseeker.scan_pids(
+            [info1["pid"], info2["pid"]], rules, opts())
+        check("pids: scan_pids returns one result per PID",
+              len(results2) == 2 and len(skipped2) == 0,
+              f"results={len(results2)} skipped={len(skipped2)}")
+        check("pids: both results have five hits each",
+              all(len(r.hits) == 5 for r in results2))
+        # Multi report: one file, grouped per process.
+        with tempfile.TemporaryDirectory() as td:
+            txt = os.path.join(td, "multi.txt")
+            memseeker.write_multi_report(results2, skipped2, rules, txt,
+                                         as_json=False)
+            body = open(txt).read()
+            check("multi: text report lists both PIDs",
+                  str(info1["pid"]) in body
+                  and str(info2["pid"]) in body)
+            check("multi: text report lists every hit offset",
+                  all(f"0x{h.offset:x}" in body
+                      for r in results2 for h in r.hits))
+            js = os.path.join(td, "multi.json")
+            memseeker.write_multi_report(results2, skipped2, rules, js,
+                                         as_json=True)
+            data = json.load(open(js))
+            check("multi: JSON report has one entry per process",
+                  len(data["processes"]) == 2
+                  and sorted(p["pid"] for p in data["processes"])
+                  == sorted([info1["pid"], info2["pid"]]))
+        # CLI --pids: from a separate process the labs are refused by
+        # Yama here (no CAP_SYS_PTRACE) — or scanned where the reader
+        # holds the capability. Accept either, never a traceback.
+        r = run_tool(["--pids", f"{info1['pid']},{info2['pid']}",
+                      "--rules", RULES_LAB, "--no-color", "-q"])
+        if r.returncode == 1:
+            check("pids: CLI --pids finds hits in both labs "
+                  "(CAP_SYS_PTRACE present)",
+                  "2 process(es)" in r.stdout and "10 hit(s)" in r.stdout,
+                  r.stdout.strip()[-200:])
+        elif r.returncode == 2:
+            check("pids: CLI --pids refused cleanly by Yama "
+                  "(no CAP_SYS_PTRACE here)",
+                  "No process could be scanned" in r.stdout
+                  and "Traceback" not in r.stdout,
+                  r.stdout.strip()[-200:])
+        else:
+            check("pids: CLI --pids returns 1 or 2, never a traceback",
+                  False, f"exit={r.returncode}")
+        # --image: dump lab 1's heap region to a file, then scan the
+        # file and find the same markers at the same offsets.
+        regions = memseeker.parse_maps(info1["pid"])
+        heap = region_of(regions, info1["markers"]["alpha"])
+        check("image: alpha marker lives in a region", heap is not None)
+        with tempfile.TemporaryDirectory() as td:
+            dump_path = os.path.join(td, "heap.bin")
+            backend = memseeker.get_backend()
+            reader = backend.open_memory(info1["pid"])
+            try:
+                written = memseeker.dump_region(reader, heap, dump_path)
+            finally:
+                reader.close()
+            check("image: the heap region dumps to a file",
+                  written == heap.size
+                  and os.path.getsize(dump_path) == heap.size,
+                  f"written={written} size={heap.size}")
+            expected_keys = [k for k in ("alpha", "password", "hex",
+                                         "apikey", "straddle")
+                             if heap.start <= info1["markers"][k] < heap.end]
+            img_rules = memseeker.load_rules(RULES_LAB)
+            img = memseeker.scan_image(dump_path, img_rules, opts())
+            check("image: the dump scan finds the region's markers",
+                  len(img.hits) == len(expected_keys),
+                  f"hits={len(img.hits)} expected={expected_keys}")
+            for key, rule in (("alpha", "MemMarkerAlpha"),
+                              ("password", "LeakedPassword"),
+                              ("hex", "InjectedBytes"),
+                              ("apikey", "ApiKeyPattern"),
+                              ("straddle", "StraddleMarker")):
+                if key not in expected_keys:
+                    continue
+                hit = next((h for h in img.hits
+                            if h.rule.name == rule), None)
+                check(f"image: {rule} at the same offset as the live scan",
+                      hit is not None
+                      and hit.offset == info1["markers"][key] - heap.start,
+                      f"offset={hit.offset if hit else None}")
+            img2 = memseeker.scan_image(dump_path, img_rules, opts(),
+                                        base=0x100000)
+            check("image: --base shifts every hit address by the base",
+                  all(h.address == h.offset + 0x100000 for h in img2.hits)
+                  and len(img2.hits) == len(img.hits))
+            r = run_tool(["--image", dump_path, "--rules", RULES_LAB,
+                          "--no-color", "-q"])
+            check("image: CLI --image finds the markers (exit 1)",
+                  r.returncode == 1 and "hit(s)" in r.stdout,
+                  f"exit={r.returncode} out={r.stdout.strip()[-160:]}")
+            # --dump: scan lab 1 with a dump dir; exactly the hit
+            # regions are dumped, and the report names the files.
+            dump_dir = os.path.join(td, "dumps")
+            dopts = opts()
+            dopts["dump"] = dump_dir
+            dres = memseeker.scan_process(info1["pid"], rules, dopts)
+            files = sorted(os.listdir(dump_dir))
+            check("dump: exactly the hit regions are dumped (one file)",
+                  len(files) == 1, f"files={files}")
+            check("dump: the file name carries PID, range and region",
+                  bool(files) and files[0].startswith(f"{info1['pid']}_")
+                  and files[0].endswith(".bin"),
+                  str(files))
+            dumped = os.path.join(dump_dir, files[0]) if files else ""
+            check("dump: the dumped file holds the region bytes",
+                  bool(dumped)
+                  and os.path.getsize(dumped) == heap.size
+                  and b"MEMSEEKER_MARKER_ALPHA" in open(dumped, "rb").read(),
+                  f"size={os.path.getsize(dumped) if dumped else 0}")
+            check("dump: every hit names its dump file",
+                  bool(dres.hits)
+                  and all(h.dump_file == dumped for h in dres.hits))
+            js = os.path.join(td, "r.json")
+            memseeker.write_report(dres, rules, js, as_json=True)
+            data = json.load(open(js))
+            check("dump: the JSON report names the dump file",
+                  all(h.get("dump_file") == dumped
+                      for h in data["hits"]))
+            # CLI --dump with --image: works from any process.
+            dd = os.path.join(td, "dumps2")
+            r = run_tool(["--image", dump_path, "--rules", RULES_LAB,
+                          "--dump", dd, "--no-color", "-q"])
+            check("dump: CLI --image --dump writes the region file",
+                  r.returncode == 1 and os.path.isdir(dd)
+                  and len(os.listdir(dd)) == 1,
+                  f"exit={r.returncode} files="
+                  f"{os.listdir(dd) if os.path.isdir(dd) else 'no dir'}")
+        # Groups: rule files with member rules + a group.
+        def write_rules(body):
+            fh = tempfile.NamedTemporaryFile("w", suffix=".txt",
+                                             delete=False)
+            fh.write(body)
+            fh.close()
+            return fh.name
+
+        alpha_rule = ("[MemMarkerAlpha]\ntype = string\n"
+                      "pattern = MEMSEEKER_MARKER_ALPHA\n")
+        pw_rule = ("[LeakedPassword]\ntype = string\n"
+                   "pattern = hunter2\n")
+        key_rule = ("[ApiKeyPattern]\ntype = regex\n"
+                    "pattern = sk-[A-Za-z0-9]{20,}\n")
+        miss_rule = ("[NoSuchOne]\ntype = string\n"
+                     "pattern = NO_SUCH_MARKER_ONE_XYZ\n")
+        miss2_rule = ("[NoSuchTwo]\ntype = string\n"
+                      "pattern = NO_SUCH_MARKER_TWO_XYZ\n")
+        # 2 of (A, B, C) — all three fire in the lab.
+        path = write_rules(alpha_rule + pw_rule + key_rule +
+                           "\n[Group:Pair]\ncondition = 2 of "
+                           "(MemMarkerAlpha, LeakedPassword, "
+                           "ApiKeyPattern)\n")
+        try:
+            grules = memseeker.load_rules(path)
+            groups = memseeker.load_groups(path, grules)
+            check("groups: one group loaded from the file",
+                  len(groups) == 1 and groups[0].name == "Pair")
+            gopts = opts(path)
+            gopts["groups"] = groups
+            gres = memseeker.scan_process(info1["pid"], grules, gopts)
+            g_hits = [h for h in gres.hits if h.rule.rtype == "group"]
+            check("groups: '2 of' fires once when all three members fire",
+                  len(g_hits) == 1 and g_hits[0].rule.name == "Pair",
+                  f"group hits={len(g_hits)}")
+            check("groups: the group hit is in the anonymous heap",
+                  bool(g_hits) and region_of(
+                      memseeker.parse_maps(info1["pid"]),
+                      g_hits[0].address).name == "[anon]")
+        finally:
+            os.unlink(path)
+        # 2 of (A, B, C) — only A fires.
+        path = write_rules(alpha_rule + miss_rule + miss2_rule +
+                           "\n[Group:Pair]\ncondition = 2 of "
+                           "(MemMarkerAlpha, NoSuchOne, NoSuchTwo)\n")
+        try:
+            grules = memseeker.load_rules(path)
+            groups = memseeker.load_groups(path, grules)
+            gopts = opts(path)
+            gopts["groups"] = groups
+            gres = memseeker.scan_process(info1["pid"], grules, gopts)
+            check("groups: '2 of' stays silent when only one member fires",
+                  not any(h.rule.rtype == "group" for h in gres.hits)
+                  and len(gres.hits) == 1)
+        finally:
+            os.unlink(path)
+        # all of + any of — all members fire.
+        path = write_rules(alpha_rule + pw_rule + key_rule +
+                           "\n[Group:AllThree]\ncondition = all of "
+                           "(MemMarkerAlpha, LeakedPassword, "
+                           "ApiKeyPattern)\n"
+                           "\n[Group:AnyOne]\ncondition = any of "
+                           "(MemMarkerAlpha, LeakedPassword, "
+                           "ApiKeyPattern)\n")
+        try:
+            grules = memseeker.load_rules(path)
+            groups = memseeker.load_groups(path, grules)
+            check("groups: two groups loaded (all of + any of)",
+                  len(groups) == 2)
+            gopts = opts(path)
+            gopts["groups"] = groups
+            gres = memseeker.scan_process(info1["pid"], grules, gopts)
+            names = sorted(h.rule.name for h in gres.hits
+                           if h.rule.rtype == "group")
+            check("groups: 'all of' and 'any of' both fire when all "
+                  "members fire", names == ["AllThree", "AnyOne"],
+                  f"groups={names}")
+        finally:
+            os.unlink(path)
+        # all of stays silent, any of fires, when one member is missing.
+        path = write_rules(alpha_rule + miss_rule +
+                           "\n[Group:AllTwo]\ncondition = all of "
+                           "(MemMarkerAlpha, NoSuchOne)\n"
+                           "\n[Group:AnyTwo]\ncondition = any of "
+                           "(MemMarkerAlpha, NoSuchOne)\n")
+        try:
+            grules = memseeker.load_rules(path)
+            groups = memseeker.load_groups(path, grules)
+            gopts = opts(path)
+            gopts["groups"] = groups
+            gres = memseeker.scan_process(info1["pid"], grules, gopts)
+            names = sorted(h.rule.name for h in gres.hits
+                           if h.rule.rtype == "group")
+            check("groups: 'all of' stays silent, 'any of' fires, when "
+                  "one member is missing", names == ["AnyTwo"],
+                  f"groups={names}")
+        finally:
+            os.unlink(path)
+        # Bad groups are clean errors that name the group.
+        for label, body, needle in (
+                ("unknown member",
+                 alpha_rule + "\n[Group:Bad]\ncondition = 2 of "
+                 "(MemMarkerAlpha, GhostRule)\n", "Bad"),
+                ("impossible count",
+                 alpha_rule + pw_rule + "\n[Group:Bad]\ncondition = 5 of "
+                 "(MemMarkerAlpha, LeakedPassword)\n", "Bad"),
+                ("bad syntax",
+                 alpha_rule + "\n[Group:Bad]\ncondition = two of them\n",
+                 "Bad")):
+            path = write_rules(body)
+            try:
+                r = run_tool([str(os.getpid()), "--rules", path,
+                              "--no-color"])
+            finally:
+                os.unlink(path)
+            check(f"groups: {label} errors cleanly and names the group",
+                  r.returncode == 2 and needle in r.stdout
+                  and "Traceback" not in r.stdout,
+                  (r.stdout + r.stderr)[:160])
+        # --list-rules lists the groups too.
+        r = run_tool(["--list-rules", "--rules",
+                      os.path.join(HERE, "rules_groups.txt"), "--no-color"])
+        check("groups: --list-rules shows the group names and conditions",
+              r.returncode == 0 and "SecretPair" in r.stdout
+              and "2 of" in r.stdout and "AllSecrets" in r.stdout,
+              r.stdout[:200])
+    finally:
+        stop_lab(proc1)
+        stop_lab(proc2)
+
+
+# --- Step 10 — v1.1 cross-platform backends (mocked) ----------------------
+def step10():
+    print("\nStep 10 — Cross-platform backends (mocked Windows/macOS)")
+    from unittest import mock
+
+    # --- Windows: fake kernel32 -----------------------------------------
+    alpha = b"".join([b"MEMSEEKER_", b"MARKER_", b"ALPHA"])
+    straddle = b"".join([b"MEMSEEKER_", b"STRADDLE_", b"MARKER"])
+    mem_base = 0x10000
+    mem = bytearray(b"\x00" * 0x2000)
+    mem[0x100:0x100 + len(alpha)] = alpha
+    # Straddle marker: starts 2 bytes before the 64-byte boundary at
+    # offset 0x140, so it crosses into the next chunk.
+    mem[0x13e:0x13e + len(straddle)] = straddle
+    mem2_base = 0x20000
+    mem2 = b"kernel32.dll bytes here" + b"\x00" * (0x1000 - 24)
+    fake_mem = {mem_base: bytes(mem), mem2_base: mem2}
+    regions_win = [
+        (mem_base, 0x2000, memseeker.MEM_COMMIT,
+         memseeker.PAGE_READWRITE),
+        (mem2_base, 0x1000, memseeker.MEM_COMMIT,
+         memseeker.PAGE_READONLY),
+        (0x30000, 0x1000, memseeker.MEM_COMMIT,
+         memseeker.PAGE_NOACCESS),
+        (0x40000, 0x1000, memseeker.MEM_COMMIT,
+         memseeker.PAGE_EXECUTE_READWRITE | memseeker.PAGE_GUARD),
+    ]
+
+    def fake_vq(handle, address):
+        for base, size, state, prot in regions_win:
+            if base + size > address:
+                return (base, size, state, prot)
+        return None
+
+    def fake_read(handle, address, size):
+        for base, blob in fake_mem.items():
+            if base <= address < base + len(blob):
+                off = address - base
+                return blob[off:off + size]
+        raise OSError(f"ReadProcessMemory failed at 0x{address:x}")
+
+    def fake_mapped(handle, address):
+        return ("C:\\Windows\\System32\\kernel32.dll"
+                if address == mem2_base else "")
+
+    with mock.patch.object(memseeker, "_win_open_process",
+                           return_value=1234), \
+         mock.patch.object(memseeker, "_win_virtual_query_ex",
+                           side_effect=fake_vq), \
+         mock.patch.object(memseeker, "_win_read_process_memory",
+                           side_effect=fake_read), \
+         mock.patch.object(memseeker, "_win_get_mapped_file_name",
+                           side_effect=fake_mapped), \
+         mock.patch.object(memseeker, "_win_close_handle"), \
+         mock.patch.object(memseeker, "_win_get_process_name",
+                           return_value="notepad.exe"):
+        backend = memseeker.WindowsBackend()
+        regions = backend.list_regions(4242)
+        check("win: mocked VirtualQueryEx lists the readable regions",
+              len(regions) == 2
+              and regions[0].start == mem_base
+              and regions[1].start == mem2_base,
+              f"regions={[(hex(r.start), r.perms) for r in regions]}")
+        check("win: NOACCESS and GUARD regions are skipped",
+              all(r.start not in (0x30000, 0x40000) for r in regions))
+        check("win: mapped file name becomes the region name",
+              "kernel32.dll" in regions[1].name,
+              regions[1].name)
+        check("win: process name comes from the image name",
+              backend.process_name(4242) == "notepad.exe")
+        with tempfile.NamedTemporaryFile("w", suffix=".txt",
+                                         delete=False) as fh:
+            fh.write("[MemMarkerAlpha]\ntype = string\n"
+                     "pattern = MEMSEEKER_MARKER_ALPHA\n\n"
+                     "[StraddleMarker]\ntype = string\n"
+                     "pattern = MEMSEEKER_STRADDLE_MARKER\n")
+            rules_path = fh.name
+        try:
+            rules = memseeker.load_rules(rules_path)
+            result = memseeker.scan_process(
+                4242, rules, opts(rules_path, chunk_size=64),
+                backend=backend)
+        finally:
+            os.unlink(rules_path)
+        check("win: mocked scan finds the alpha marker",
+              len([h for h in result.hits
+                   if h.rule.name == "MemMarkerAlpha"]) == 1)
+        check("win: mocked scan finds the boundary-straddling marker",
+              len([h for h in result.hits
+                   if h.rule.name == "StraddleMarker"]) == 1)
+        alpha_hits = [h for h in result.hits
+                      if h.rule.name == "MemMarkerAlpha"]
+        check("win: mocked hit address is the marker's address",
+              bool(alpha_hits)
+              and alpha_hits[0].address == mem_base + 0x100,
+              f"0x{alpha_hits[0].address:x}" if alpha_hits else "no hit")
+    # Access denied on Windows.
+    with mock.patch.object(memseeker, "_win_open_process",
+                           return_value=None), \
+         mock.patch.object(memseeker, "_win_last_error",
+                           return_value=5):
+        backend = memseeker.WindowsBackend()
+        try:
+            backend.check_ownership(4242)
+            denied = False
+        except memseeker.MemSeekerError as exc:
+            denied = "access denied" in str(exc).lower()
+        check("win: access denied is a clean refusal, not a traceback",
+              denied)
+
+    # --- macOS: fake mach APIs -------------------------------------------
+    mac_base = 0x100000000
+    mac_mem = bytearray(b"\x00" * 0x6000)
+    mac_mem[0x200:0x200 + len(alpha)] = alpha
+    mac_regions = [
+        (mac_base, 0x4000,
+         memseeker.VM_PROT_READ | memseeker.VM_PROT_WRITE, 0),
+        (mac_base + 0x4000, 0x2000, memseeker.VM_PROT_READ, 2),
+        (mac_base + 0x6000, 0x1000, 0, 0),
+    ]
+
+    def fake_vm_region(task, address):
+        for base, size, prot, share in mac_regions:
+            if base + size > address:
+                return (base, size, prot, share)
+        return None
+
+    def fake_vm_read(task, address, size):
+        if mac_base <= address < mac_base + len(mac_mem):
+            off = address - mac_base
+            return bytes(mac_mem[off:off + size])
+        raise OSError(f"vm_read failed at 0x{address:x}")
+
+    with mock.patch.object(memseeker, "_mac_task_for_pid",
+                           return_value=999), \
+         mock.patch.object(memseeker, "_mac_vm_region_64",
+                           side_effect=fake_vm_region), \
+         mock.patch.object(memseeker, "_mac_vm_read",
+                           side_effect=fake_vm_read), \
+         mock.patch.object(memseeker, "_mac_process_uid",
+                           return_value=os.getuid()), \
+         mock.patch.object(memseeker, "_mac_process_name",
+                           return_value="python3"):
+        backend = memseeker.MacOSBackend()
+        regions = backend.list_regions(4242)
+        check("mac: mocked vm_region_64 lists the readable regions",
+              len(regions) == 2 and regions[0].start == mac_base,
+              f"regions={[(hex(r.start), r.perms) for r in regions]}")
+        check("mac: a region without read permission is skipped",
+              all(r.start != mac_base + 0x6000 for r in regions))
+        check("mac: permissions map to the rwxp string",
+              regions[0].perms == "rw-p" and regions[1].perms == "r--s",
+              f"{regions[0].perms}/{regions[1].perms}")
+        with tempfile.NamedTemporaryFile("w", suffix=".txt",
+                                         delete=False) as fh:
+            fh.write("[MemMarkerAlpha]\ntype = string\n"
+                     "pattern = MEMSEEKER_MARKER_ALPHA\n")
+            rules_path = fh.name
+        try:
+            rules = memseeker.load_rules(rules_path)
+            result = memseeker.scan_process(
+                4242, rules, opts(rules_path), backend=backend)
+        finally:
+            os.unlink(rules_path)
+        alpha_hits = [h for h in result.hits
+                      if h.rule.name == "MemMarkerAlpha"]
+        check("mac: mocked scan finds the alpha marker",
+              len(alpha_hits) == 1)
+        check("mac: mocked hit address is the marker's address",
+              bool(alpha_hits)
+              and alpha_hits[0].address == mac_base + 0x200,
+              f"0x{alpha_hits[0].address:x}" if alpha_hits else "no hit")
+    # task_for_pid denied on macOS.
+    with mock.patch.object(
+            memseeker, "_mac_task_for_pid",
+            side_effect=memseeker.MemSeekerError(
+                "Cannot get a task port for PID 4242 (task_for_pid "
+                "failed, kern_return 5). On macOS, reading another "
+                "process needs root or the debugger entitlement.")):
+        backend = memseeker.MacOSBackend()
+        try:
+            backend.list_regions(4242)
+            denied = False
+        except memseeker.MemSeekerError as exc:
+            denied = "task_for_pid" in str(exc)
+        check("mac: task_for_pid refusal is clean and names the privilege",
+              denied)
+
+    # --- ImageFile + backend selection ------------------------------------
+    with tempfile.NamedTemporaryFile("wb", suffix=".bin",
+                                     delete=False) as fh:
+        fh.write(b"\x00" * 0x100 + alpha + b"\x00" * 0x100)
+        img_path = fh.name
+    try:
+        with open(img_path, "rb", buffering=0) as raw:
+            reader = memseeker.ImageFile(raw, base=0x1000)
+            reader.seek(0x1100)
+            check("image: ImageFile reads at base + offset",
+                  reader.read(len(alpha)) == alpha)
+            try:
+                reader.seek(0x0fff)
+                reader.read(4)
+                below_base_ok = False
+            except OSError:
+                below_base_ok = True
+            check("image: an address below the base is refused",
+                  below_base_ok)
+    finally:
+        os.unlink(img_path)
+    check("backends: get_backend() is the Linux backend on this VM",
+          isinstance(memseeker.get_backend(), memseeker.LinuxBackend))
+    check("backends: named backends construct on any platform",
+          isinstance(memseeker.get_backend("windows"),
+                     memseeker.WindowsBackend)
+          and isinstance(memseeker.get_backend("macos"),
+                         memseeker.MacOSBackend)
+          and isinstance(memseeker.get_backend("linux"),
+                         memseeker.LinuxBackend))
+
+
 # --- CLI bits: --map, --list-rules, --version, doctor --------------------
 def step_cli_bits():
     print("\nCLI bits — --map, --list-rules, --version, doctor")
@@ -491,7 +1001,7 @@ def step_cli_bits():
                    "ApiKeyPattern", "StraddleMarker")),
           r.stdout[:200])
     r = run_tool(["--version"])
-    check("cli: --version prints 1.0", "1.0" in r.stdout)
+    check("cli: --version prints 1.1", "1.1" in r.stdout)
     r = run_tool(["--doctor", "--no-color"])
     check("cli: doctor passes on this machine",
           r.returncode == 0 and "all good" in r.stdout,
@@ -510,7 +1020,7 @@ def main():
     print("MemSeeker step tests")
     print("=" * 58)
     for step in (step1, step2, step3, step4, step5, step6, step7, step8,
-                 step_cli_bits):
+                 step_cli_bits, step9, step10):
         try:
             step()
         except Exception as exc:  # noqa: BLE001 - one step's crash

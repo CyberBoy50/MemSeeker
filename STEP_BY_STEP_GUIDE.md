@@ -2,7 +2,7 @@
 
 Build the tool one step at a time, test each step before moving on.
 Every step below is a function in `test_memseeker.py` — run the whole
-suite with `python run.py test` (61 checks, all passing).
+suite with `python run.py test` (118 checks, all passing).
 
 Setup first (once):
 
@@ -259,6 +259,127 @@ bits/byte; the strings around the `hunter2` hit must include
 `hunter2`; and in watch mode a rule added between rounds must appear
 as a NEW hit in the next round only.
 
+## Step 9 — v1.1: multi-PID, image, dump, groups
+
+**Write:** scan every process you own (`--all`) and several PIDs at
+once (`--pids`); scan a raw memory dump file (`--image`, `--base`);
+dump every region that holds a hit (`--dump`); and evaluate
+YARA-style group conditions per region (`[Group:Name]`).
+
+**Run:**
+
+```
+python run.py test   # step9
+python3 memseeker.py --all --rules rules_lab.txt
+python3 memseeker.py --pids 1234,5678 --rules rules_lab.txt
+python3 memseeker.py --image heap.bin --rules rules_lab.txt
+python3 memseeker.py <pid> --rules rules_lab.txt --dump dumps/
+python3 memseeker.py --lab --rules rules_groups.txt
+```
+
+**Expected output:**
+
+```
+Step 9 — v1.1: multi-PID, image, dump, groups
+  [PASS] all: both lab processes appear in the --all results
+  [PASS] all: lab 1 has all five lab hits
+  [PASS] all: lab 1 hits are in the anonymous heap
+  [PASS] all: lab 2 has all five lab hits
+  [PASS] all: lab 2 hits are in the anonymous heap
+  [PASS] all: unreadable processes are skipped, not fatal
+  [PASS] pids: scan_pids returns one result per PID
+  [PASS] pids: both results have five hits each
+  [PASS] multi: text report lists both PIDs
+  [PASS] multi: text report lists every hit offset
+  [PASS] multi: JSON report has one entry per process
+  [PASS] pids: CLI --pids refused cleanly by Yama (no CAP_SYS_PTRACE here)
+  [PASS] image: alpha marker lives in a region
+  [PASS] image: the heap region dumps to a file
+  [PASS] image: the dump scan finds the region's markers
+  [PASS] image: MemMarkerAlpha at the same offset as the live scan
+  [PASS] image: LeakedPassword at the same offset as the live scan
+  [PASS] image: InjectedBytes at the same offset as the live scan
+  [PASS] image: ApiKeyPattern at the same offset as the live scan
+  [PASS] image: StraddleMarker at the same offset as the live scan
+  [PASS] image: --base shifts every hit address by the base
+  [PASS] image: CLI --image finds the markers (exit 1)
+  [PASS] dump: exactly the hit regions are dumped (one file)
+  [PASS] dump: the file name carries PID, range and region
+  [PASS] dump: the dumped file holds the region bytes
+  [PASS] dump: every hit names its dump file
+  [PASS] dump: the JSON report names the dump file
+  [PASS] dump: CLI --image --dump writes the region file
+  [PASS] groups: one group loaded from the file
+  [PASS] groups: '2 of' fires once when all three members fire
+  [PASS] groups: the group hit is in the anonymous heap
+  [PASS] groups: '2 of' stays silent when only one member fires
+  [PASS] groups: two groups loaded (all of + any of)
+  [PASS] groups: 'all of' and 'any of' both fire when all members fire
+  [PASS] groups: 'all of' stays silent, 'any of' fires, when one member is missing
+  [PASS] groups: unknown member errors cleanly and names the group
+  [PASS] groups: impossible count errors cleanly and names the group
+  [PASS] groups: bad syntax errors cleanly and names the group
+  [PASS] groups: --list-rules shows the group names and conditions
+```
+
+**Test it:** start two lab processes and scan all — both must appear
+with 5 hits each; dump one lab's heap region to a file and scan the
+file — the same markers at the same offsets; scan with a dump
+directory — exactly one file (all five hits live in one region) and
+every hit names it; and write group files where 2 of 3, all of, and
+any of are each checked in both directions (fires when the condition
+is met, silent when it is not).
+
+## Step 10 — v1.1 cross-platform backends (mocked Windows/macOS)
+
+**Write:** a backend abstraction — one reader interface with three
+backends (Linux `/proc`, Windows kernel32 via `ctypes`, macOS mach
+via `ctypes`) — and test the Windows/macOS backends with mocked
+`ctypes` calls, since this VM is Linux only and the real OS calls
+cannot run here.
+
+**Run:**
+
+```
+python run.py test   # step10
+```
+
+**Expected output:**
+
+```
+Step 10 — Cross-platform backends (mocked Windows/macOS)
+  [PASS] win: mocked VirtualQueryEx lists the readable regions
+  [PASS] win: NOACCESS and GUARD regions are skipped
+  [PASS] win: mapped file name becomes the region name
+  [PASS] win: process name comes from the image name
+  [PASS] win: mocked scan finds the alpha marker
+  [PASS] win: mocked scan finds the boundary-straddling marker
+  [PASS] win: mocked hit address is the marker's address
+  [PASS] win: access denied is a clean refusal, not a traceback
+  [PASS] mac: mocked vm_region_64 lists the readable regions
+  [PASS] mac: a region without read permission is skipped
+  [PASS] mac: permissions map to the rwxp string
+  [PASS] mac: mocked scan finds the alpha marker
+  [PASS] mac: mocked hit address is the marker's address
+  [PASS] mac: task_for_pid refusal is clean and names the privilege
+  [PASS] image: ImageFile reads at base + offset
+  [PASS] image: an address below the base is refused
+  [PASS] backends: get_backend() is the Linux backend on this VM
+  [PASS] backends: named backends construct on any platform
+```
+
+**Test it:** stub the kernel32/mach functions with
+`unittest.mock.patch` on the module-level `_win_*` / `_mac_*`
+functions — fake `VirtualQueryEx` returning canned regions
+(readable READWRITE + READONLY, NOACCESS and GUARD skipped),
+fake `ReadProcessMemory` from a canned memory dict holding the
+alpha marker and a marker straddling a 64-byte chunk boundary, and
+an access-denied case (`OpenProcess` → None, error 5) that must be
+a clean refusal. Same for macOS: fake `task_for_pid` /
+`vm_region_64` / `vm_read`, plus the denied case. The mocked tests
+cover the logic, not the real OS calls — a real Windows run and a
+real Mac run are still needed for live verification.
+
 ## Full test suite
 
 ```
@@ -267,7 +388,7 @@ MemSeeker step tests
 ==========================================================
 Step 1 — Read the memory map
 ...
-PASSED: 61   FAILED: 0
+PASSED: 118   FAILED: 0
 ALL CHECKS PASSED
 ```
 

@@ -1,7 +1,7 @@
 # MemSeeker — Demo and Write-up
 
 A real scan of the lab process, end to end. Everything below is real
-output from this machine (25 November 2026).
+output from this machine (25 November 2026), MemSeeker v1.1.
 
 ## 1. Start the lab and scan it
 
@@ -16,7 +16,7 @@ $ python run.py labscan
 ```
 Lab process started: PID 11116 (python3)
 
- [ SCAN ] MemSeeker v1.0
+ [ SCAN ] MemSeeker v1.1
  Process ID            : 11116
  Process               : python3
  Rules file            : rules_lab.txt (5 rules)
@@ -111,7 +111,125 @@ until something changes in the process memory — then only the new
 hits are printed. (The step tests prove this: they swap the rule file
 between rounds and the new rule's hit appears as NEW in round 2.)
 
-## 6. The defensive lesson
+## 6. Rule groups — one finding from several rules (v1.1)
+
+The group rule file (`rules_groups.txt`) keeps three member rules and
+adds three groups:
+
+```ini
+[Group:SecretPair]
+condition = 2 of (MemMarkerAlpha, LeakedPassword, ApiKeyPattern)
+
+[Group:AnySecret]
+condition = any of (MemMarkerAlpha, LeakedPassword, ApiKeyPattern)
+
+[Group:AllSecrets]
+condition = all of (MemMarkerAlpha, LeakedPassword, ApiKeyPattern)
+```
+
+```
+$ python3 memseeker.py --lab --rules rules_groups.txt --no-color
+Lab process started: PID 17293 (python3)
+ Regions read          : 58 (2 skipped)
+ Bytes read            : 17862656 in 0.93 s
+ Hits                  : 6
+ Entropy flags         : 5
+```
+
+6 hits, not 3: the three member rules each fire once, and all three
+groups fire too, because all three members fired in the same
+anonymous heap region:
+
+```
+ Hit 4: SecretPair (group)
+  Region:  [anon] (71ad18879000-71ad18adb000)
+  Address: 0x71ad189f7d90 (offset 0x17ed90 in region)
+  Match:   73 6b 2d ... ('<redacted>')
+  Context: ........`:.7....<<<redacted>>>..q.......... ..
+  Strings: sk-ABCDEFGH12345678XYZABCDE
+```
+
+Why this matters: a single leaked password is a finding, but a
+password **and** an API key in the same region is a much stronger
+one — it means the process is holding a whole set of live secrets,
+not one stray string. The group finding says exactly that in one
+line: "2 of these 3 secret rules fired here". A `2 of` group also
+stays silent when only one member fires (the step tests prove both
+directions), so it does not cry wolf over a single match.
+
+Note the `<redacted>` in the match line: the tool redacts the API
+key itself from the printed match and context, so the report does
+not become a second copy of the secret.
+
+## 7. Scan everything you own — `--all` (v1.1)
+
+```
+$ python run.py scanall
+```
+
+In this VM the scan runs as root under Yama `ptrace_scope=1` without
+`CAP_SYS_PTRACE`, so processes that are not the tool's own children
+are refused cleanly and listed as skipped — the scan never crashes:
+
+```
+Processes: 3 scanned, 6 skipped
+  PID 17339 (python3): 5 hit(s), 58 regions, 17862656 bytes
+  PID 17340 (python3): 5 hit(s), 58 regions, 17862656 bytes
+Skipped: 6 processes (not ours / unreadable)
+  PID 1: Permission denied opening /proc/1/mem for PID 1.
+         The kernel blocked the read (Yama ptrace_scope). ...
+```
+
+Both lab processes (started as children, so the read is allowed)
+show their 5 hits each; the other processes are skipped with the
+reason. On Kali Linux, where you are root with `CAP_SYS_PTRACE`,
+the same command reads every own process instead of skipping them.
+The report is grouped per process — PID, process name, then that
+process's hits — in text and in JSON.
+
+## 8. Scan a memory image — `--image` and `--dump` (v1.1)
+
+Dump the lab's heap region to a file, then scan the file as if it
+were memory. The file offsets are the addresses:
+
+```
+$ python3 memseeker.py --image heap.bin --rules rules_lab.txt
+
+ [ SCAN ] MemSeeker v1.1
+ Mode                  : Memory image: heap.bin
+ Rules file            : rules_lab.txt (5 rules)
+ Chunk size            : 65536 bytes
+ Entropy scan          : off
+ String extraction     : off
+ Output                : memseeker_report.txt
+
+ Regions read          : 1 (0 skipped)
+ Bytes read            : 2498560 in 0.01 s
+ Hits                  : 5
+```
+
+The same 5 markers, at the same offsets as the live scan — the alpha
+marker at offset `0x17efd0`, the API key at `0x17ed90`, the password
+at `0x1db690`. A dump taken on one machine can be analysed on any
+other, with no live-process access at all. `--base 0x100000` shifts
+every reported address by that base when the dump came from a known
+address.
+
+With `--dump`, the hit regions are saved alongside the report:
+
+```
+$ python3 memseeker.py <pid> --rules rules_lab.txt --dump dumps/
+DUMP: 1 file(s):
+  dumps/17339_7536b66a2000-7536b6904000_anon.bin
+DUMP: hits with dump_file set: 5/5
+```
+
+Only the region that held the hits is dumped (one file here — all
+five hits live in the same heap region), and every hit's report entry
+names the dump file, in the text report and in the JSON report.
+Regions without hits are never dumped.
+
+## 9. The defensive lesson
 
 **Secrets must never sit in process memory in plaintext.**
 

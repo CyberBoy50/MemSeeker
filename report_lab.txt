@@ -1,13 +1,13 @@
 ==========================================================
 MemSeeker — Process Memory Scan Report
 ==========================================================
-Tool:      MemSeeker v1.0 by CyberBoy50
-Date:      2026-11-25 16:33:37
-PID:       11116 (python3)
+Tool:      MemSeeker v1.1 by CyberBoy50
+Date:      2026-11-25 17:16:18
+PID:       17489 (python3)
 Rules:     /home/hatch/workspace/memseeker/rules_lab.txt (5 rules)
 Chunk:     65536 bytes, overlap 511 bytes
 Regions:   58 read, 2 skipped, 61 total
-Bytes:     17866752 read in 0.91 s
+Bytes:     17862656 read in 0.95 s
 Hits:      5
   ApiKeyPattern: 1
   InjectedBytes: 1
@@ -19,11 +19,11 @@ Entropy:   5 high-entropy chunk(s) flagged (>= 7.5 bits/byte)
 ----------------------------------------------------------
 Hit 1: rule MemMarkerAlpha (string)
   Rule:    Planted lab marker (plain string)
-  Region:  [anon] (7fb61bfe1000-7fb61c243000, rw-p)
-  Address: 0x7fb61c15ffd0 (offset 0x17efd0 in region)
+  Region:  [anon] (73157fd9d000-73157ffff000, rw-p)
+  Address: 0x73157ff1bfd0 (offset 0x17efd0 in region)
   Match:   4d 45 4d 53 45 45 4b 45 52 5f 4d 41 52 4b 45 52 5f 41 4c 50 48 41 ('MEMSEEKER_MARKER_ALPHA')
-  Context: LE_MARKER.).....<<MEMSEEKER_MARKER_ALPHA>>................
-  Context hex (before): 4c 45 5f 4d 41 52 4b 45 52 00 29 1c d8 fe 01 00
+  Context: LE_MARKER...V...<<MEMSEEKER_MARKER_ALPHA>>................
+  Context hex (before): 4c 45 5f 4d 41 52 4b 45 52 00 05 00 56 cc 01 00
   Context hex (after):  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
   Strings around hit:
     MEMSEEKER_STRADDLE_MARKER
@@ -31,35 +31,35 @@ Hit 1: rule MemMarkerAlpha (string)
 ----------------------------------------------------------
 Hit 2: rule ApiKeyPattern (regex)
   Rule:    API key pattern (sk- followed by 20+ characters)
-  Region:  [anon] (7fb61bfe1000-7fb61c243000, rw-p)
-  Address: 0x7fb61c15fd90 (offset 0x17ed90 in region)
+  Region:  [anon] (73157fd9d000-73157ffff000, rw-p)
+  Address: 0x73157ff1bd90 (offset 0x17ed90 in region)
   Match:   73 6b 2d 41 42 43 44 45 46 47 48 31 32 33 34 35 36 37 38 58 59 5a 41 42 43 44 45 ('sk-ABCDEFGH12345678XYZABCDE')
-  Context: ........ .]4....<<sk-ABCDEFGH12345678XYZABCDE>>............. ..
-  Context hex (before): 08 00 00 00 00 00 00 00 20 e8 5d 34 00 00 00 00
-  Context hex (after):  00 b6 7f 00 00 01 00 00 00 00 00 00 00 20 bf a3
+  Context: ..........~>....<<sk-ABCDEFGH12345678XYZABCDE>>..s.......... ..
+  Context hex (before): 08 00 00 00 00 00 00 00 00 1b 7e 3e 00 00 00 00
+  Context hex (after):  00 15 73 00 00 01 00 00 00 00 00 00 00 20 bf a3
   Strings around hit:
     sk-ABCDEFGH12345678XYZABCDE
 ----------------------------------------------------------
 Hit 3: rule StraddleMarker (string)
   Rule:    Planted lab marker for the chunk-boundary test
-  Region:  [anon] (7fb61bfe1000-7fb61c243000, rw-p)
-  Address: 0x7fb61c15ffb0 (offset 0x17efb0 in region)
+  Region:  [anon] (73157fd9d000-73157ffff000, rw-p)
+  Address: 0x73157ff1bfb0 (offset 0x17efb0 in region)
   Match:   4d 45 4d 53 45 45 4b 45 52 5f 53 54 52 41 44 44 4c 45 5f 4d 41 52 4b 45 52 ('MEMSEEKER_STRADDLE_MARKER')
-  Context: ................<<MEMSEEKER_STRADDLE_MARKER>>.).....MEMSEEKER
+  Context: ................<<MEMSEEKER_STRADDLE_MARKER>>...V...MEMSEEKER
   Context hex (before): 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  Context hex (after):  00 29 1c d8 fe 01 00 4d 45 4d 53 45 45 4b 45 52
+  Context hex (after):  00 05 00 56 cc 01 00 4d 45 4d 53 45 45 4b 45 52
   Strings around hit:
     MEMSEEKER_STRADDLE_MARKER
     MEMSEEKER_MARKER_ALPHA
 ----------------------------------------------------------
 Hit 4: rule LeakedPassword (string)
   Rule:    Plaintext password left in process memory
-  Region:  [anon] (7fb61bfe1000-7fb61c243000, rw-p)
-  Address: 0x7fb61c1bc690 (offset 0x1db690 in region)
+  Region:  [anon] (73157fd9d000-73157ffff000, rw-p)
+  Address: 0x73157ff78690 (offset 0x1db690 in region)
   Match:   68 75 6e 74 65 72 32 ('hunter2')
-  Context: ......"3........<<hunter2>>.0..............
-  Context hex (before): de ad be ef 00 11 22 33 00 ac eb 1b b6 7f 00 00
-  Context hex (after):  00 30 9a b3 00 00 00 00 00 00 c7 1b 1c b6 7f 00
+  Context: ......"3.n...s..<<hunter2>>.0............s.
+  Context hex (before): de ad be ef 00 11 22 33 00 6e c7 7f 15 73 00 00
+  Context hex (after):  00 30 9a b3 00 00 00 00 00 00 87 f7 7f 15 73 00
   Strings around hit:
     _json.Scanner
     _json.Encoder
@@ -68,32 +68,32 @@ Hit 4: rule LeakedPassword (string)
 ----------------------------------------------------------
 Hit 5: rule InjectedBytes (hex)
   Rule:    Known injected marker bytes
-  Region:  [anon] (7fb61bfe1000-7fb61c243000, rw-p)
-  Address: 0x7fb61c1bc680 (offset 0x1db680 in region)
+  Region:  [anon] (73157fd9d000-73157ffff000, rw-p)
+  Address: 0x73157ff78680 (offset 0x1db680 in region)
   Match:   de ad be ef 00 11 22 33 ('......"3')
-  Context: 0a..............<<......"3>>........hunter2.
-  Context hex (before): 30 61 09 1c b6 7f 00 00 d0 c6 b3 00 00 00 00 00
-  Context hex (after):  00 ac eb 1b b6 7f 00 00 68 75 6e 74 65 72 32 00
+  Context: .....s..........<<......"3>>.n...s..hunter2.
+  Context hex (before): b0 1f e5 7f 15 73 00 00 d0 c6 b3 00 00 00 00 00
+  Context hex (after):  00 6e c7 7f 15 73 00 00 68 75 6e 74 65 72 32 00
   Strings around hit:
     _json.Scanner
     _json.Encoder
     hunter2
     sk-ABCDEF1234
 ----------------------------------------------------------
-Entropy flag: [anon] (7fb61be18000-7fb61be59000)
-  Chunk at 0x7fb61be18000: 8.00 bits/byte — possibly packed or encrypted data.
+Entropy flag: [anon] (73157fbd4000-73157fc15000)
+  Chunk at 0x73157fbd4000: 8.00 bits/byte — possibly packed or encrypted data.
 ----------------------------------------------------------
-Entropy flag: [anon] (7fb61be18000-7fb61be59000)
-  Chunk at 0x7fb61be28000: 8.00 bits/byte — possibly packed or encrypted data.
+Entropy flag: [anon] (73157fbd4000-73157fc15000)
+  Chunk at 0x73157fbe4000: 8.00 bits/byte — possibly packed or encrypted data.
 ----------------------------------------------------------
-Entropy flag: [anon] (7fb61be18000-7fb61be59000)
-  Chunk at 0x7fb61be38000: 8.00 bits/byte — possibly packed or encrypted data.
+Entropy flag: [anon] (73157fbd4000-73157fc15000)
+  Chunk at 0x73157fbf4000: 8.00 bits/byte — possibly packed or encrypted data.
 ----------------------------------------------------------
-Entropy flag: [anon] (7fb61be18000-7fb61be59000)
-  Chunk at 0x7fb61be48000: 8.00 bits/byte — possibly packed or encrypted data.
+Entropy flag: [anon] (73157fbd4000-73157fc15000)
+  Chunk at 0x73157fc04000: 8.00 bits/byte — possibly packed or encrypted data.
 ----------------------------------------------------------
-Entropy flag: /usr/lib/x86_64-linux-gnu/libm.so.6 (7fb61c58a000-7fb61c5e2000)
-  Chunk at 0x7fb61c5ba000: 7.51 bits/byte — possibly packed or encrypted data.
+Entropy flag: /usr/lib/x86_64-linux-gnu/libm.so.6 (731580346000-73158039e000)
+  Chunk at 0x731580376000: 7.51 bits/byte — possibly packed or encrypted data.
 
 Defensive lesson: secrets must never sit in process memory in plaintext. A password or key left in a plain variable can be read by anyone who can read the process memory — this scan just proved it. Programs that handle secrets lock the memory (mlock), zero the buffer as soon as they are done with it, and keep keys in a system keyring or a hardware-backed store instead of a variable.
 
