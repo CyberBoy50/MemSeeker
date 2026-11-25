@@ -1,7 +1,8 @@
 # MemSeeker — Demo and Write-up
 
 A real scan of the lab process, end to end. Everything below is real
-output from this machine (25 November 2026), MemSeeker v1.1.
+output from this machine (25 November 2026), MemSeeker v1.1. Section
+10 adds the v1.3 runs (26 November 2026).
 
 ## 1. Start the lab and scan it
 
@@ -229,7 +230,105 @@ five hits live in the same heap region), and every hit's report entry
 names the dump file, in the text report and in the JSON report.
 Regions without hits are never dumped.
 
-## 9. The defensive lesson
+## 10. v1.3 — the remaining gaps, closed (26 November 2026)
+
+Version 1.3 closes every gap from the report's section 13 that can
+be closed on this machine. All of it is real output, from the runs
+below and from Step 11 of the test suite (30 new checks, 151 total,
+all passing).
+
+### Long regex matches across chunk boundaries
+
+Before v1.3 a regex match longer than ~512 bytes that straddled a
+chunk boundary could be missed. The overlap is now 8191 bytes
+(`min(8192, chunk_size - 1)`). A dump file holding a 2000-byte run
+of `B` straddling the 4096-byte boundary and a 1500-byte run inside
+one chunk, scanned with `--chunk-size 4096` and the rule
+`B{1500,}`:
+
+```
+$ python3 memseeker.py --image long.bin --rules long_rules.txt --chunk-size 4096
+ [+] Report saved: long.txt
+ [!] 2 hit(s) — see the report.
+
+Hit 1: rule LongRun (regex)
+  Address: 0xdac (offset 0xdac in region)      # 3500 — the straddling match
+Hit 2: rule LongRun (regex)
+  Address: 0x1964 (offset 0x1964 in region)    # 6500 — the in-chunk match
+```
+
+Both found, exactly once each, with the reported match lengths 2000
+and 1500 bytes. (The `Match:` hex line for a 2000-byte match is 2000
+bytes long, so it is left out of this write-up.)
+
+### String modifiers: `nocase` and `wide`
+
+A dump file holding `HuNtEr2` (mixed case), `hunter2` as UTF-16LE,
+and plain `hunter2`, scanned with three rules — `nocase`, `wide`
+and plain:
+
+```
+Hit 1: rule NocasePw (string)
+  Address: 0x64 (offset 0x64 in region)
+  Match:   48 75 4e 74 45 72 32 ('HuNtEr2')
+Hit 2: rule NocasePw (string)
+  Address: 0x3e8 (offset 0x3e8 in region)
+  Match:   68 75 6e 74 65 72 32 ('hunter2')
+Hit 3: rule WidePw (string)
+  Address: 0x1f4 (offset 0x1f4 in region)
+  Match:   68 00 75 00 6e 00 74 00 65 00 72 00 32 00 ('h.u.n.t.e.r.2.')
+Hit 4: rule PlainPw (string)
+  Address: 0x3e8 (offset 0x3e8 in region)
+  Match:   68 75 6e 74 65 72 32 ('hunter2')
+```
+
+The `nocase` hit keeps its original case (`HuNtEr2`, not lowercased
+in the report); the plain rule matches neither the mixed-case nor
+the wide form. `--list-rules` shows the modifiers, and a bad
+modifier (`nocase` on a hex rule, `nocase = maybe`) is a clean error
+naming the rule. `rules_default.txt` now ships both as examples
+(`PasswordWordNoCase`, `PasswordWordWide`).
+
+### Tunable entropy threshold
+
+The lab scan at the default threshold flags 5 chunks — the four
+random-blob chunks at 8.00 bits/byte plus `libm.so.6` at 7.51.
+Raising the threshold drops the library noise and keeps the real
+find:
+
+```
+$ python3 memseeker.py --lab --rules rules_lab.txt --entropy --entropy-threshold 7.9
+Entropy:   4 high-entropy chunk(s) flagged (>= 7.9 bits/byte)
+```
+
+4 flags, all in the anonymous heap at 8.00 bits/byte. The threshold
+used is recorded in the report (`Entropy threshold: 7.9 bits/byte`
+in text, `entropy_threshold_bits_per_byte` in JSON), and a value
+outside 0–8 is a clean error (exit 2).
+
+### Map-change detection and watch groups
+
+The memory map is re-read after every scan. On a normal lab scan
+nothing changed (`map_changed: false` in the JSON report); the test
+suite proves the other direction by feeding a changed map back and
+checking the report says so. Watch mode now reloads the rule groups
+every round like the rules — before v1.3 it silently ignored them,
+so a group that should have fired in watch mode never did. `--map`
+now goes through the platform backend instead of reading `/proc`
+directly, so it works on Windows and macOS too.
+
+### What v1.3 honestly leaves open
+
+Three things remain, and they remain for reasons no code written
+here can remove: live Windows testing needs a real Windows run and
+live macOS testing needs a real Mac (mocked tests cover the logic,
+not the real OS calls); the full YARA language needs the YARA engine
+(a C library to install — against this tool's zero-dependency
+design); and Volatility-style profiled image analysis needs a
+Volatility-scale profiler. Those are stated in the README and the
+report, not hidden.
+
+## 11. The defensive lesson
 
 **Secrets must never sit in process memory in plaintext.**
 

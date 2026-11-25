@@ -45,3 +45,15 @@ description = A secret or password value in plaintext
 type = hex
 pattern = de ad be ef
 description = Classic injected-marker bytes
+
+[PasswordWordNoCase]
+type = string
+pattern = password
+nocase = true
+description = The word "password" in any case (finds PASSWORD, Password, ...)
+
+[PasswordWordWide]
+type = string
+pattern = password
+wide = true
+description = The word "password" as UTF-16LE (finds it in .NET/Java process memory)

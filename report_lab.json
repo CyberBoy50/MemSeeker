@@ -1,11 +1,11 @@
 {
-  "tool": "MemSeeker v1.2",
+  "tool": "MemSeeker v1.3",
   "author": "CyberBoy50",
   "disclaimer": "DISCLAIMER \u2014 AUTHORIZED USE ONLY. This tool was built for ethical, authorized security testing only. You are using it on your own responsibility. The authors are not responsible for how you use it, or for anything that happens because of your use. Only test systems, code, and data you own or have explicit written permission to test \u2014 testing anything else may be illegal (for example, PECA 2016 in Pakistan).",
-  "date": "2026-11-25 19:24:33",
-  "pid": 55334,
+  "date": "2026-11-25 19:42:31",
+  "pid": 38126,
   "process": "python3",
-  "rules_file": "/home/hatch/workspace/memseeker/rules_lab.txt",
+  "rules_file": "rules_lab.txt",
   "rules": [
     "MemMarkerAlpha",
     "LeakedPassword",
@@ -19,31 +19,35 @@
   "regions_skipped": [
     {
       "region": "[vvar]",
-      "range": "7658de294000-7658de298000",
+      "range": "71e7db7b4000-71e7db7b8000",
       "reason": "[Errno 5] Input/output error"
     },
     {
       "region": "[vvar_vclock]",
-      "range": "7658de298000-7658de29a000",
+      "range": "71e7db7b8000-71e7db7ba000",
       "reason": "[Errno 5] Input/output error"
     }
   ],
   "bytes_read": 17866752,
-  "seconds": 1.199,
+  "seconds": 0.906,
+  "entropy_scan": true,
+  "entropy_threshold_bits_per_byte": 7.5,
+  "map_changed": false,
+  "map_note": "",
   "hits": [
     {
       "rule": "MemMarkerAlpha",
       "rule_type": "string",
       "region": "[anon]",
-      "region_range": "7658ddc84000-7658ddee6000",
-      "address": "0x7658dde03fd0",
+      "region_range": "71e7db1a4000-71e7db406000",
+      "address": "0x71e7db323fd0",
       "offset": 1572816,
       "offset_hex": "0x17ffd0",
       "match_hex": "4d 45 4d 53 45 45 4b 45 52 5f 4d 41 52 4b 45 52 5f 41 4c 50 48 41",
       "match_ascii": "MEMSEEKER_MARKER_ALPHA",
-      "context_before_hex": "4c 45 5f 4d 41 52 4b 45 52 00 f4 1d 63 d9 01 00",
+      "context_before_hex": "4c 45 5f 4d 41 52 4b 45 52 00 46 1b 9f c7 01 00",
       "context_after_hex": "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
-      "context_ascii": "LE_MARKER...c...MEMSEEKER_MARKER_ALPHA................",
+      "context_ascii": "LE_MARKER.F.....MEMSEEKER_MARKER_ALPHA................",
       "strings": [
         "MEMSEEKER_STRADDLE_MARKER",
         "MEMSEEKER_MARKER_ALPHA"
@@ -53,15 +57,15 @@
       "rule": "ApiKeyPattern",
       "rule_type": "regex",
       "region": "[anon]",
-      "region_range": "7658ddc84000-7658ddee6000",
-      "address": "0x7658dde03d90",
+      "region_range": "71e7db1a4000-71e7db406000",
+      "address": "0x71e7db323d90",
       "offset": 1572240,
       "offset_hex": "0x17fd90",
       "match_hex": "73 6b 2d 41 42 43 44 45 46 47 48 31 32 33 34 35 36 37 38 58 59 5a 41 42 43 44 45",
       "match_ascii": "sk-ABCDEFGH12345678XYZABCDE",
-      "context_before_hex": "08 00 00 00 00 00 00 00 50 2f ae 12 00 00 00 00",
-      "context_after_hex": "00 58 76 00 00 01 00 00 00 00 00 00 00 20 bf a3",
-      "context_ascii": "........P/......sk-ABCDEFGH12345678XYZABCDE.Xv.......... ..",
+      "context_before_hex": "08 00 00 00 00 00 00 00 50 1f 29 1e 00 00 00 00",
+      "context_after_hex": "00 e7 71 00 00 01 00 00 00 00 00 00 00 20 bf a3",
+      "context_ascii": "........P.).....sk-ABCDEFGH12345678XYZABCDE..q.......... ..",
       "strings": [
         "sk-ABCDEFGH12345678XYZABCDE"
       ]
@@ -70,15 +74,15 @@
       "rule": "StraddleMarker",
       "rule_type": "string",
       "region": "[anon]",
-      "region_range": "7658ddc84000-7658ddee6000",
-      "address": "0x7658dde03fb0",
+      "region_range": "71e7db1a4000-71e7db406000",
+      "address": "0x71e7db323fb0",
       "offset": 1572784,
       "offset_hex": "0x17ffb0",
       "match_hex": "4d 45 4d 53 45 45 4b 45 52 5f 53 54 52 41 44 44 4c 45 5f 4d 41 52 4b 45 52",
       "match_ascii": "MEMSEEKER_STRADDLE_MARKER",
       "context_before_hex": "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
-      "context_after_hex": "00 f4 1d 63 d9 01 00 4d 45 4d 53 45 45 4b 45 52",
-      "context_ascii": "................MEMSEEKER_STRADDLE_MARKER...c...MEMSEEKER",
+      "context_after_hex": "00 46 1b 9f c7 01 00 4d 45 4d 53 45 45 4b 45 52",
+      "context_ascii": "................MEMSEEKER_STRADDLE_MARKER.F.....MEMSEEKER",
       "strings": [
         "MEMSEEKER_STRADDLE_MARKER",
         "MEMSEEKER_MARKER_ALPHA"
@@ -88,15 +92,15 @@
       "rule": "LeakedPassword",
       "rule_type": "string",
       "region": "[anon]",
-      "region_range": "7658ddc84000-7658ddee6000",
-      "address": "0x7658dde60690",
+      "region_range": "71e7db1a4000-71e7db406000",
+      "address": "0x71e7db380690",
       "offset": 1951376,
       "offset_hex": "0x1dc690",
       "match_hex": "68 75 6e 74 65 72 32",
       "match_ascii": "hunter2",
-      "context_before_hex": "de ad be ef 00 11 22 33 00 70 b5 dd 58 76 00 00",
-      "context_after_hex": "00 30 9a b3 00 00 00 00 00 00 07 e6 dd 58 76 00",
-      "context_ascii": "......\"3.p..Xv..hunter2.0...........Xv.",
+      "context_before_hex": "de ad be ef 00 11 22 33 00 70 07 db e7 71 00 00",
+      "context_after_hex": "00 30 9a b3 00 00 00 00 00 00 07 38 db e7 71 00",
+      "context_ascii": "......\"3.p...q..hunter2.0.........8..q.",
       "strings": [
         "_json.Scanner",
         "_json.Encoder",
@@ -108,15 +112,15 @@
       "rule": "InjectedBytes",
       "rule_type": "hex",
       "region": "[anon]",
-      "region_range": "7658ddc84000-7658ddee6000",
-      "address": "0x7658dde60680",
+      "region_range": "71e7db1a4000-71e7db406000",
+      "address": "0x71e7db380680",
       "offset": 1951360,
       "offset_hex": "0x1dc680",
       "match_hex": "de ad be ef 00 11 22 33",
       "match_ascii": "......\"3",
-      "context_before_hex": "b0 5f d3 dd 58 76 00 00 d0 c6 b3 00 00 00 00 00",
-      "context_after_hex": "00 70 b5 dd 58 76 00 00 68 75 6e 74 65 72 32 00",
-      "context_ascii": "._..Xv................\"3.p..Xv..hunter2.",
+      "context_before_hex": "b0 5f 25 db e7 71 00 00 d0 c6 b3 00 00 00 00 00",
+      "context_after_hex": "00 70 07 db e7 71 00 00 68 75 6e 74 65 72 32 00",
+      "context_ascii": "._%..q................\"3.p...q..hunter2.",
       "strings": [
         "_json.Scanner",
         "_json.Encoder",
@@ -135,32 +139,32 @@
   "entropy_flags": [
     {
       "region": "[anon]",
-      "range": "7658ddabb000-7658ddafc000",
-      "chunk_address": "0x7658ddabb000",
+      "range": "71e7dafdb000-71e7db01c000",
+      "chunk_address": "0x71e7dafdb000",
       "entropy_bits_per_byte": 8.0
     },
     {
       "region": "[anon]",
-      "range": "7658ddabb000-7658ddafc000",
-      "chunk_address": "0x7658ddacb000",
+      "range": "71e7dafdb000-71e7db01c000",
+      "chunk_address": "0x71e7dafeb000",
       "entropy_bits_per_byte": 8.0
     },
     {
       "region": "[anon]",
-      "range": "7658ddabb000-7658ddafc000",
-      "chunk_address": "0x7658ddadb000",
+      "range": "71e7dafdb000-71e7db01c000",
+      "chunk_address": "0x71e7daffb000",
       "entropy_bits_per_byte": 8.0
     },
     {
       "region": "[anon]",
-      "range": "7658ddabb000-7658ddafc000",
-      "chunk_address": "0x7658ddaeb000",
+      "range": "71e7dafdb000-71e7db01c000",
+      "chunk_address": "0x71e7db00b000",
       "entropy_bits_per_byte": 8.0
     },
     {
       "region": "/usr/lib/x86_64-linux-gnu/libm.so.6",
-      "range": "7658de22d000-7658de285000",
-      "chunk_address": "0x7658de25d000",
+      "range": "71e7db74d000-71e7db7a5000",
+      "chunk_address": "0x71e7db77d000",
       "entropy_bits_per_byte": 7.51
     }
   ]

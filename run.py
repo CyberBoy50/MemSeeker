@@ -8,7 +8,7 @@ Usage:
     python run.py scanall      # scan every process you own
     python run.py image <file> --rules rules_lab.txt # scan a dump file
     python run.py labscan      # start the lab AND scan it (one step)
-    python run.py test         # run the 10 build-plan step tests
+    python run.py test         # run the 11 build-plan step tests
     python run.py doctor       # check the setup
     python run.py menu         # open the numbered menu
 

@@ -2,7 +2,7 @@
 
 Build the tool one step at a time, test each step before moving on.
 Every step below is a function in `test_memseeker.py` — run the whole
-suite with `python run.py test` (118 checks, all passing).
+suite with `python run.py test` (151 checks, all passing).
 
 Setup first (once):
 
@@ -380,6 +380,71 @@ a clean refusal. Same for macOS: fake `task_for_pid` /
 cover the logic, not the real OS calls — a real Windows run and a
 real Mac run are still needed for live verification.
 
+## Step 11 — v1.3: long regex, modifiers, entropy threshold, map change, watch groups
+
+**Write:** raise the regex overlap to 8192 bytes; add `nocase` /
+`wide` modifiers to string rules; make the entropy threshold a
+`--entropy-threshold` flag; re-read the memory map after every scan
+and record a change; reload rule groups every watch round; route
+`--map` through the platform backend.
+
+**Run:**
+
+```
+python run.py test   # step11
+python3 memseeker.py --image long.bin --rules long_rules.txt --chunk-size 4096
+python3 memseeker.py --lab --rules rules_lab.txt --entropy --entropy-threshold 7.9
+```
+
+**Expected output:**
+
+```
+Step 11 — v1.3: regex overlap, modifiers, entropy, map change, watch groups
+  [PASS] regex: a regex rule keeps 8191 bytes of overlap (default chunk)
+  [PASS] regex: the overlap is capped by the chunk size
+  [PASS] regex: a 2000-byte match straddling a chunk boundary is found (past the old 512 bound)
+  [PASS] regex: a 1500-byte match inside one chunk is found
+  [PASS] regex: each long match is found exactly once
+  [PASS] regex: the reported matches are 2000 and 1500 bytes
+  [PASS] mods: nocase matches the mixed-case and plain forms
+  [PASS] mods: the nocase hit keeps its original case
+  [PASS] mods: wide matches the UTF-16LE encoding
+  [PASS] mods: wide match bytes are the UTF-16LE encoding
+  [PASS] mods: a plain rule matches neither mixed-case nor wide
+  [PASS] mods: --list-rules shows nocase and wide
+  [PASS] mods: nocase on a hex rule errors cleanly and names the rule
+  [PASS] mods: bad nocase value errors cleanly and names the rule
+  [PASS] entropy: default threshold 7.5 flags the random chunk
+  [PASS] entropy: the report names the 7.5 threshold
+  [PASS] entropy: threshold 8.0 flags nothing (random data is below 8.0 bits/byte)
+  [PASS] entropy: the result and report carry the 8.0 threshold
+  [PASS] entropy: the JSON report carries the threshold
+  [PASS] entropy: CLI threshold 9 is a clean error (exit 2)
+  [PASS] entropy: CLI --entropy-threshold 8.0 writes the threshold into the report
+  [PASS] mapchange: a changed map is detected after the scan
+  [PASS] mapchange: the text report says the map changed
+  [PASS] mapchange: the JSON report carries map_changed=true
+  [PASS] mapchange: a map that cannot be re-read is reported, not a crash
+  [PASS] mapchange: an unchanged map is not flagged
+  [PASS] watch: watch mode ends cleanly after 1 round
+  [PASS] watch: the group fires inside watch mode (groups are no longer ignored)
+  [PASS] map: --map works through the platform backend (Windows regions listed)
+  [PASS] map: the backend's ownership check was used
+```
+
+**Test it:** build a dump file with a 2000-byte regex match
+straddling a 4096-byte chunk boundary — it must be found exactly
+once (the old 512-byte bound would have missed it); build a file
+with `HuNtEr2`, UTF-16LE `hunter2` and plain `hunter2` — the nocase
+rule must hit the first two forms, the wide rule the UTF-16LE one,
+the plain rule only the plain one; scan a file that is half random
+bytes, half plain text — threshold 7.5 flags the random chunk,
+threshold 8.0 flags nothing; mock the backend's second map read to
+return a changed map — the report must say so, and a re-read that
+fails must be reported, not a crash; run watch mode for one round
+with a group file — the group must fire; and drive `--map` through
+a mocked Windows backend — the regions must be listed.
+
 ## Full test suite
 
 ```
@@ -388,7 +453,7 @@ MemSeeker step tests
 ==========================================================
 Step 1 — Read the memory map
 ...
-PASSED: 118   FAILED: 0
+PASSED: 151   FAILED: 0
 ALL CHECKS PASSED
 ```
 

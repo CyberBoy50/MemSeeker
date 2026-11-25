@@ -65,6 +65,25 @@ V1.1 ADDITIONS (on top of the 6 must-haves + 3 stretch items):
     ctypes), macOS (task_for_pid + vm_read via ctypes) — same CLI,
     same menu, same rule file, same report format
 
+V1.3 ADDITIONS (closing the remaining gaps that can be closed here):
+  * Regex overlap raised: a regex match up to 8192 bytes long that
+    straddles a chunk boundary is now found (was: ~512 bytes).
+    The bound is min(8192, chunk_size - 1) and is reported per scan.
+  * String rule modifiers: `nocase = true` (case-insensitive match,
+    ASCII) and `wide = true` (match the UTF-16LE encoding, for
+    .NET/Java process memory) — YARA-style, still stdlib only.
+  * Tunable entropy threshold: --entropy-threshold N (default 7.5),
+    so dense system libraries that trip 7.5 can be filtered out
+    without losing the packed/encrypted-data flags.
+  * Map-change detection: the process memory map is re-read after
+    every scan; if regions appeared, disappeared or changed size
+    mid-scan, the report says so (a hit is a snapshot of one moment).
+  * Watch mode now honours rule groups: groups are reloaded every
+    round, like the rules (before, watch mode silently ignored them).
+  * --map now goes through the platform backend, so it works on
+    Windows and macOS too (before, it read /proc directly and could
+    only work on Linux).
+
 USAGE — three ways, same tool:
   Menu (SSTIProbe / TraceRecon style — default when run with no args):
     python run.py menu
@@ -90,6 +109,7 @@ USAGE — three ways, same tool:
     python3 memseeker.py 1234 --rules rules_lab.txt
     python3 memseeker.py --lab   # start the lab as our child, scan it
     python3 memseeker.py 1234 --rules rules_lab.txt --entropy --strings
+    python3 memseeker.py 1234 --rules rules_lab.txt --entropy --entropy-threshold 7.9
     python3 memseeker.py 1234 --rules rules_lab.txt --json -o report.json
     python3 memseeker.py 1234 --rules rules_lab.txt --watch 5
     python3 memseeker.py 1234 --rules rules_lab.txt --map
@@ -116,7 +136,7 @@ import time
 from collections import Counter
 from datetime import datetime
 
-VERSION = "1.2"
+VERSION = "1.3"
 AUTHOR = "CyberBoy50"
 QUIET = False
 
@@ -138,8 +158,10 @@ CONTEXT_BYTES = 16              # context bytes shown on each side of a hit
 STRINGS_WINDOW = 64             # bytes scanned for strings around a hit
 STRINGS_MIN_LEN = 4             # shortest printable run kept as a "string"
 ENTROPY_THRESHOLD = 7.5         # bits/byte above this = possibly packed/encrypted
-REGEX_MAX_LEN = 512             # assumed max length of a regex match (overlap)
-MAX_OVERLAP = 4096              # overlap window is never bigger than this
+REGEX_OVERLAP = 8192            # overlap kept for regex rules, so a regex
+                                # match up to 8192 bytes long that straddles
+                                # a chunk boundary is still found
+MAX_OVERLAP = 8192              # overlap window is never bigger than this
 MAX_HITS_PER_RULE = 10000       # safety cap so one wild rule cannot flood the report
 DEFAULT_RULES = "rules_lab.txt"
 DEFAULT_OUTPUT = "memseeker_report.txt"
@@ -1069,31 +1091,63 @@ class ImageFile:
 
 # --- Rules ---------------------------------------------------------------
 class Rule:
-    """One rule from the rule file: name, type, compiled matcher."""
+    """One rule from the rule file: name, type, compiled matcher.
 
-    __slots__ = ("name", "rtype", "raw", "compiled", "description", "plen")
+    String rules may carry modifiers (v1.3, YARA-style, stdlib only):
+    nocase — match any case (ASCII letters); wide — match the
+    UTF-16LE encoding of the pattern (for .NET/Java process memory).
+    Both together match the UTF-16LE encoding case-insensitively.
+    """
 
-    def __init__(self, name, rtype, raw, compiled, description, plen):
+    __slots__ = ("name", "rtype", "raw", "compiled", "description",
+                 "plen", "nocase", "wide")
+
+    def __init__(self, name, rtype, raw, compiled, description, plen,
+                 nocase=False, wide=False):
         self.name = name
         self.rtype = rtype          # "string" | "hex" | "regex"
         self.raw = raw              # pattern text as written in the file
         self.compiled = compiled    # bytes (string/hex) or re.Pattern (regex)
         self.description = description
         self.plen = plen            # length used for the overlap window
+        self.nocase = nocase        # string rules only
+        self.wide = wide            # string rules only
 
     def find_all(self, buf):
-        """Yield (start, end) of every match of this rule in buf."""
+        """Yield (start, end) of every match of this rule in buf.
+
+        For a nocase string rule the search runs on the lowercased
+        buffer, but the yielded slice comes from the original buffer,
+        so the reported match bytes keep their real case.
+        """
         if self.rtype == "regex":
             for m in self.compiled.finditer(buf):
                 yield m.start(), m.end()
         else:
+            needle = self.compiled
+            hay = buf
+            if self.nocase:
+                hay = buf.lower()
+                needle = needle.lower()
             start = 0
             while True:
-                i = buf.find(self.compiled, start)
+                i = hay.find(needle, start)
                 if i < 0:
                     return
-                yield i, i + len(self.compiled)
+                yield i, i + len(needle)
                 start = i + 1
+
+
+def _parse_bool(value, section, path, key):
+    """A rule-file true/false value. Anything else names the rule."""
+    text = value.strip().lower()
+    if text in ("true", "yes", "1", "on"):
+        return True
+    if text in ("false", "no", "0", "off", ""):
+        return False
+    raise MemSeekerError(
+        f"Rule '{section}' in {path} has a bad {key} value: '{value}' "
+        "(use true or false).")
 
 
 def load_rules(path):
@@ -1104,7 +1158,9 @@ def load_rules(path):
         type = string | hex | regex
         pattern = <the pattern>
         description = <optional, shown in reports>
-    A bad rule (unknown type, bad hex, bad regex) raises
+        nocase = true   (string rules only, v1.3: any case, ASCII)
+        wide = true     (string rules only, v1.3: UTF-16LE encoding)
+    A bad rule (unknown type, bad hex, bad regex, bad modifier) raises
     MemSeekerError NAMING the rule, before any scanning starts.
     """
     if not os.path.isfile(path):
@@ -1121,11 +1177,23 @@ def load_rules(path):
         rtype = cfg.get(section, "type", fallback="").strip().lower()
         raw = cfg.get(section, "pattern", fallback="").strip()
         desc = cfg.get(section, "description", fallback="").strip()
+        nocase = _parse_bool(cfg.get(section, "nocase", fallback="false"),
+                             section, path, "nocase")
+        wide = _parse_bool(cfg.get(section, "wide", fallback="false"),
+                           section, path, "wide")
+        if (nocase or wide) and rtype not in ("string", ""):
+            raise MemSeekerError(
+                f"Rule '{section}' in {path} uses nocase/wide, which "
+                "only apply to string rules (regex rules can use (?i) "
+                "for case-insensitivity).")
         if not raw:
             raise MemSeekerError(
                 f"Rule '{section}' in {path} has an empty pattern.")
         if rtype == "string":
-            compiled = raw.encode("utf-8")
+            if wide:
+                compiled = raw.encode("utf-16-le")
+            else:
+                compiled = raw.encode("utf-8")
             plen = len(compiled)
         elif rtype == "hex":
             try:
@@ -1141,7 +1209,7 @@ def load_rules(path):
             except re.error as exc:
                 raise MemSeekerError(
                     f"Rule '{section}' in {path} has a bad regex: {exc}")
-            plen = REGEX_MAX_LEN
+            plen = REGEX_OVERLAP
         else:
             raise MemSeekerError(
                 f"Rule '{section}' in {path} has unknown type '{rtype}' "
@@ -1149,18 +1217,25 @@ def load_rules(path):
         if plen == 0:
             raise MemSeekerError(
                 f"Rule '{section}' in {path} has an empty pattern.")
-        rules.append(Rule(section, rtype, raw, compiled, desc, plen))
+        rules.append(Rule(section, rtype, raw, compiled, desc, plen,
+                          nocase=nocase, wide=wide))
     if not rules:
         raise MemSeekerError(f"No rules found in {path}.")
     return rules
 
 
-def overlap_size(rules):
+def overlap_size(rules, chunk_size=None):
     """Bytes of overlap between chunks: longest pattern minus one, so a
     pattern split across a chunk boundary is never missed (PDF Step 5).
-    Capped so one wild regex cannot blow up the window."""
+    Regex rules keep REGEX_OVERLAP bytes of overlap (v1.3: a regex
+    match up to 8192 bytes long straddling a boundary is found). The
+    window is capped at MAX_OVERLAP, and never bigger than the chunk
+    itself (chunk_size - 1) when the chunk size is known."""
     longest = max(r.plen for r in rules)
-    return min(max(longest - 1, 0), MAX_OVERLAP)
+    overlap = min(max(longest - 1, 0), MAX_OVERLAP)
+    if chunk_size is not None and chunk_size > 1:
+        overlap = min(overlap, chunk_size - 1)
+    return overlap
 
 
 # --- Rule groups (v1.1: YARA-style conditions) ---------------------------
@@ -1361,6 +1436,11 @@ class ScanResult:
         self.image_path = None      # set for --image scans (no live PID)
         self.base_address = 0       # --base for image scans
         self.dump_files = {}        # (region start, end) -> dump path
+        self.entropy_threshold = ENTROPY_THRESHOLD
+        self.entropy_on = False     # was --entropy given for this scan?
+        self.map_changed = False    # v1.3: the memory map changed
+                                    # mid-scan (re-read after the scan)
+        self.map_note = ""          # what changed, for the report
         self.started = datetime.now()
         self.seconds = 0.0
 
@@ -1435,7 +1515,7 @@ def scan_region(mem, mem_ctx, region, rules, overlap, opts, result):
             buf_start = carry_start if carry else chunk_start
             if opts["entropy"]:
                 ent = shannon_entropy(data)
-                if ent >= ENTROPY_THRESHOLD:
+                if ent >= opts.get("entropy_threshold", ENTROPY_THRESHOLD):
                     result.entropy_flags.append((region, chunk_start, ent))
             for rule in rules:
                 if hit_count[rule.name] >= MAX_HITS_PER_RULE:
@@ -1506,12 +1586,15 @@ def _scan_regions(reader, regions, rules, opts, pid, proc_name,
     file, a Windows/macOS memory reader, or an ImageFile. Returns a
     ScanResult."""
     readable = readable_regions(regions)
-    overlap = overlap_size(rules)
+    overlap = overlap_size(rules, opts["chunk_size"])
     result = ScanResult(pid, proc_name, opts["rules_path"],
                         opts["chunk_size"])
     result.regions_total = len(regions)
     result.image_path = image_path
     result.base_address = base_address
+    result.entropy_threshold = opts.get("entropy_threshold",
+                                        ENTROPY_THRESHOLD)
+    result.entropy_on = bool(opts.get("entropy"))
     started = time.time()
     for region in readable:
         scan_region(reader, reader, region, rules, overlap, opts, result)
@@ -1535,11 +1618,38 @@ def scan_process(pid, rules, opts, backend=None):
     try:
         result = _scan_regions(reader, regions, rules, opts, pid,
                                backend.process_name(pid))
+        _check_map_changed(backend, pid, regions, result)
         if opts.get("dump"):
             _dump_hit_regions(reader, result, opts["dump"])
         return result
     finally:
         reader.close()
+
+
+def _check_map_changed(backend, pid, regions_before, result):
+    """v1.3: re-read the memory map after the scan and compare it with
+    the map the scan started from. A process can change while it is
+    scanned — regions appear, disappear or change size — so a hit is
+    a snapshot of one moment. Before v1.3 the tool said nothing about
+    that; now the report records it (map_changed + map_note). A map
+    that cannot be re-read at all (the process exited mid-scan) is
+    reported the same way, not as a crash."""
+    before = [(r.start, r.end, r.perms) for r in regions_before]
+    try:
+        after = [(r.start, r.end, r.perms)
+                 for r in backend.list_regions(pid)]
+    except (MemSeekerError, OSError):
+        result.map_changed = True
+        result.map_note = ("The process memory map could not be re-read "
+                           "after the scan (the process may have exited). "
+                           "Hits are a snapshot of one moment.")
+        return
+    if after != before:
+        result.map_changed = True
+        result.map_note = ("The process memory map changed during the "
+                           "scan (regions appeared, disappeared or "
+                           "changed size). Hits are a snapshot of one "
+                           "moment, not proof the bytes are still there.")
 
 
 def scan_image(path, rules, opts, base=0):
@@ -1688,18 +1798,24 @@ def _summary_lines(result, rules, include_identity=True):
             lines.append(f"PID:       {result.pid} ({result.proc_name})")
     lines.append(f"Rules:     {result.rules_path} ({len(rules)} rules)")
     lines.append(f"Chunk:     {result.chunk_size} bytes, "
-                 f"overlap {overlap_size(rules)} bytes")
+                 f"overlap {overlap_size(rules, result.chunk_size)} bytes")
     lines.append(f"Regions:   {result.regions_read} read, "
                  f"{len(result.regions_skipped)} skipped, "
                  f"{result.regions_total} total")
     lines.append(f"Bytes:     {result.bytes_read} read in "
                  f"{result.seconds:.2f} s")
+    if result.map_changed:
+        lines.append(f"Map changed during scan: yes — {result.map_note}")
+    if result.entropy_on:
+        lines.append(f"Entropy threshold: {result.entropy_threshold} "
+                     "bits/byte")
     lines.append(f"Hits:      {len(result.hits)}")
     for name, count in sorted(result.hits_per_rule().items()):
         lines.append(f"  {name}: {count}")
     if result.entropy_flags:
         lines.append(f"Entropy:   {len(result.entropy_flags)} high-entropy "
-                     f"chunk(s) flagged (>= {ENTROPY_THRESHOLD} bits/byte)")
+                     f"chunk(s) flagged (>= {result.entropy_threshold} "
+                     "bits/byte)")
     return lines
 
 
@@ -1802,6 +1918,10 @@ def result_to_dict(result, rules):
         ],
         "bytes_read": result.bytes_read,
         "seconds": round(result.seconds, 3),
+        "entropy_scan": result.entropy_on,
+        "entropy_threshold_bits_per_byte": result.entropy_threshold,
+        "map_changed": result.map_changed,
+        "map_note": result.map_note,
         "hits": [h.to_dict() for h in result.hits],
         "hits_per_rule": result.hits_per_rule(),
         "entropy_flags": [
@@ -1897,6 +2017,10 @@ def print_config(pid, rules_path, rules, opts, mode=None):
     info("Rules file", f"{rules_path} ({len(rules)} rules)")
     info("Chunk size", f"{opts['chunk_size']} bytes")
     info("Entropy scan", "on" if opts["entropy"] else "off")
+    if opts["entropy"]:
+        info("Entropy threshold",
+             f"{opts.get('entropy_threshold', ENTROPY_THRESHOLD)} "
+             "bits/byte")
     info("String extraction", "on" if opts["strings"] else "off")
     if opts.get("dump"):
         info("Region dump", opts["dump"])
@@ -1920,6 +2044,10 @@ def watch_process(pid, rules, opts, interval, rounds=0):
             round_no += 1
             try:
                 rules = load_rules(opts["rules_path"])
+                # v1.3: groups are reloaded every round too, like the
+                # rules — before, watch mode silently ignored groups
+                # (opts["groups"] stayed empty).
+                opts["groups"] = load_groups(opts["rules_path"], rules)
             except MemSeekerError as exc:
                 err(str(exc))
                 return 2
@@ -2143,6 +2271,8 @@ def _scan_opts(args, rules_path):
         "rules_path": rules_path,
         "chunk_size": args.chunk_size,
         "entropy": args.entropy,
+        "entropy_threshold": getattr(args, "entropy_threshold",
+                                     ENTROPY_THRESHOLD),
         "strings": args.strings,
         "output": args.output,
         "dump": getattr(args, "dump", None),
@@ -2288,17 +2418,23 @@ def do_multi_scan(args, pids=None, all_flag=False, rules_path=None):
 
 
 def do_map(args, pid=None):
-    """Option 3 / --map: print every region of a process."""
+    """Option 3 / --map: print every region of a process.
+
+    Goes through the platform backend (v1.3), so it works on Windows
+    and macOS too — before, it read /proc directly and could only
+    work on Linux."""
     pid = pid if pid is not None else (
         args.pid[0] if getattr(args, "pid", None) else os.getpid())
     print_banner()
+    backend = get_backend()
     try:
-        check_ownership(pid)
-        regions = parse_maps(pid)
+        backend.check_ownership(pid)
+        regions = backend.list_regions(pid)
+        proc_name = backend.process_name(pid)
     except MemSeekerError as exc:
         err(str(exc))
         return 2
-    header(f"Memory map — PID {pid} ({process_name(pid)})")
+    header(f"Memory map — PID {pid} ({proc_name})")
     readable = readable_regions(regions)
     info("Regions", f"{len(regions)} total, {len(readable)} readable")
     print()
@@ -2327,6 +2463,13 @@ def do_list_rules(args, rules_path=None):
         if rule.description:
             print(f"      {rule.description}")
         print(f"      pattern: {rule.raw}")
+        mods = []
+        if rule.nocase:
+            mods.append("nocase")
+        if rule.wide:
+            mods.append("wide")
+        if mods:
+            print(f"      modifiers: {', '.join(mods)}")
     if groups:
         header(f"Rule groups — {rules_path} ({len(groups)} group(s))")
         for group in groups:
@@ -2499,6 +2642,10 @@ def parse_args(argv=None):
                    help="write the report as JSON instead of text")
     p.add_argument("--entropy", action="store_true",
                    help="flag high-entropy chunks (possibly packed/encrypted)")
+    p.add_argument("--entropy-threshold", type=float, default=7.5,
+                   metavar="N",
+                   help="entropy threshold in bits/byte (default: 7.5, "
+                        "range 0-8); only with --entropy")
     p.add_argument("--strings", action="store_true",
                    help="extract printable strings around each hit")
     p.add_argument("--watch", type=int, metavar="N",
@@ -2555,6 +2702,9 @@ def main(argv=None):
         return 0
     if args.chunk_size <= 0:
         err("--chunk-size must be a positive integer.")
+        return 2
+    if not 0 <= args.entropy_threshold <= 8:
+        err("--entropy-threshold must be between 0 and 8 bits/byte.")
         return 2
     QUIET = args.quiet
     try:

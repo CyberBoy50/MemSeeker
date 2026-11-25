@@ -11,7 +11,7 @@ tool looks where the disk never sees. It only ever **reads** memory;
 it never writes to another process.
 
 - **Author:** CyberBoy50
-- **Version:** 1.2
+- **Version:** 1.3
 - **Platform:** Linux, Windows and macOS (see the platform matrix
   below). The project spec is Linux — the PDF asked for a Linux tool —
   and the Windows/macOS backends are added on top of that spec, not
@@ -42,6 +42,16 @@ It then:
 5. **Reports each hit** with the rule name, region name, offset inside
    the region, absolute address and surrounding context bytes.
 6. **Saves the report** to a file (text, or JSON with `--json`).
+
+v1.3 change (26 November 2026): closes the remaining gaps that can
+be closed on this machine — regex matches up to 8192 bytes long that
+straddle a chunk boundary are now found (was: ~512); string rules
+gain `nocase` and `wide` modifiers; the entropy threshold is tunable
+with `--entropy-threshold`; the memory map is re-read after every
+scan and the report says if it changed mid-scan; watch mode now
+honours rule groups; `--map` works through the platform backend
+(Windows/macOS too). See the Notes section for what still remains
+and why.
 
 v1.2 change (text only — no detection logic changed): an explicit
 authorized-use responsibility disclaimer is now shown in the banner
@@ -78,7 +88,9 @@ v1.1 additions:
 Stretch features, all included:
 
 - **Entropy scan** (`--entropy`) — flags chunks above ~7.5 bits/byte
-  of Shannon entropy as possibly packed or encrypted data.
+  of Shannon entropy as possibly packed or encrypted data. The
+  threshold is tunable (`--entropy-threshold 7.9`) and is recorded
+  in the report (text and JSON).
 - **String extraction** (`--strings`) — prints the readable strings
   around each hit for context.
 - **Watch mode** (`--watch N`) — rescans every N seconds and reports
@@ -177,8 +189,41 @@ description = API key pattern (sk- followed by 20+ characters)
 | `hex` | Byte pairs, spaces allowed | `de ad be ef 00 11 22 33` |
 | `regex` | A regular expression on the raw bytes | `sk-[A-Za-z0-9]{20,}` |
 
-A bad rule (unknown type, bad hex, bad regex, empty pattern) is a
-clean error that **names the rule** — before any scanning starts.
+String rules take two optional modifiers (v1.3, YARA-style, still
+standard library only):
+
+```ini
+[PasswordWordNoCase]
+type = string
+pattern = password
+nocase = true
+description = The word "password" in any case
+
+[PasswordWordWide]
+type = string
+pattern = password
+wide = true
+description = The word "password" as UTF-16LE (.NET/Java memory)
+```
+
+- `nocase = true` — match any case (ASCII letters). The reported
+  match bytes keep their real case.
+- `wide = true` — match the UTF-16LE encoding of the pattern, for
+  secrets held by .NET/Java programs. Both together match the
+  UTF-16LE encoding case-insensitively.
+- The modifiers only apply to string rules: on a hex or regex rule
+  they are a clean error naming the rule (regex rules can use `(?i)`
+  for case-insensitivity). A bad value (`nocase = maybe`) is a clean
+  error naming the rule.
+- A regex match up to **8192 bytes** long that straddles a chunk
+  boundary is found; the overlap window is `min(8192, chunk_size -
+  1)` and is printed in the report (`Chunk: ... overlap 8191
+  bytes`). A regex match longer than that, straddling a boundary, is
+  the one remaining bound — it is stated here, not hidden.
+
+A bad rule (unknown type, bad hex, bad regex, empty pattern, bad
+modifier) is a clean error that **names the rule** — before any
+scanning starts.
 
 ### Rule groups (conditions)
 
@@ -220,7 +265,8 @@ listed by `--list-rules` alongside the rules.
 
 ```
 python3 memseeker.py <pid> --rules <file> [-o report] [--json]
-    [--entropy] [--strings] [--watch N] [--rounds N]
+    [--entropy] [--entropy-threshold N] [--strings] [--watch N]
+    [--rounds N]
     [--chunk-size N] [--map] [--list-rules] [--all] [--pids PIDS]
     [--image FILE] [--base ADDR] [--dump DIR]
     [-q] [--batch] [-i/--menu] [--version] [--no-color]
@@ -238,6 +284,7 @@ python3 memseeker.py <pid> --rules <file> [-o report] [--json]
 | `-o, --output FILE` | Report file (default: `memseeker_report.txt`) |
 | `--json` | Write the report as JSON instead of text |
 | `--entropy` | Flag high-entropy chunks (>= 7.5 bits/byte) |
+| `--entropy-threshold N` | Entropy threshold in bits/byte (default 7.5, range 0–8); only with `--entropy` — raise it to filter out dense system libraries that trip 7.5 |
 | `--strings` | Extract printable strings around each hit |
 | `--watch N` | Rescan every N seconds, report only NEW hits |
 | `--rounds N` | Watch mode: stop after N rounds (0 = forever) |
@@ -316,11 +363,14 @@ See `DEMO.md` for the full run.
 python run.py test
 ```
 
-121 checks, all passing — one function per PDF build-plan step
+151 checks, all passing — one function per PDF build-plan step
 (Steps 1–7) plus Step 8 for the stretch items (entropy, strings,
 watch), the CLI bits (`--map`, `--list-rules`, `--version`, doctor),
-Step 9 for the v1.1 features (multi-PID, image, dump, groups) and
-Step 10 for the cross-platform backends (mocked Windows/macOS).
+Step 9 for the v1.1 features (multi-PID, image, dump, groups), Step
+10 for the cross-platform backends (mocked Windows/macOS) and Step
+11 for the v1.3 closings (long regex overlap, `nocase`/`wide`
+modifiers, tunable entropy threshold, map-change detection, watch
+groups, backend `--map`).
 See `STEP_BY_STEP_GUIDE.md` for what each step proves.
 
 ## Files
@@ -329,7 +379,7 @@ See `STEP_BY_STEP_GUIDE.md` for what each step proves.
 |---|---|
 | `memseeker.py` | The tool itself — scanning, rules, reports, menu |
 | `lab_proc.py` | The lab process — holds planted markers, then sleeps |
-| `test_memseeker.py` | Step tests (121 checks) |
+| `test_memseeker.py` | Step tests (151 checks) |
 | `run.py` | Launcher — setup, lab, scan, scanall, image, labscan, test, doctor, menu |
 | `run.sh` / `run.bat` | One-click launchers (macOS/Linux, Windows) |
 | `rules_lab.txt` | Rules for the lab markers |
@@ -350,20 +400,37 @@ See `STEP_BY_STEP_GUIDE.md` for what each step proves.
   is still Linux.
 - **Reads only your own processes** — by design (ownership check),
   and the kernel additionally enforces Yama on Linux (see above).
-- **No YARA rules** — the rule format is deliberately simple (three
-  types plus group conditions, no YARA engine to install); YARA's full
-  language is out of scope.
+  Yama `ptrace_scope` is an environment setting, not a tool limit:
+  on Kali (root, `CAP_SYS_PTRACE`) any own process reads fine, and
+  the parent-child trick (`--lab`, menu option 2) works everywhere.
+- **No full YARA rules** — the rule format is deliberately simple
+  (three types plus group conditions, no YARA engine to install).
+  v1.3 adds the two YARA-style string modifiers that need no engine
+  (`nocase`, `wide`); YARA's full language is still out of scope.
 - **Entropy flags are leads, not verdicts** — dense system libraries
   (e.g. `libm.so.6` at 7.51 bits/byte) can trip the 7.5 threshold.
-- **Regex matches are bounded by the overlap window** — a regex match
-  longer than ~512 bytes that straddles a chunk boundary could be
-  missed; string/hex patterns are exact.
+  v1.3 makes the threshold tunable (`--entropy-threshold 7.9` keeps
+  the packed-data flags and drops the library noise on the lab).
+- **Regex matches are bounded by the overlap window** — v1.3 raises
+  the bound to 8192 bytes (was ~512); a regex match longer than
+  8192 bytes that straddles a chunk boundary could still be missed.
+  String/hex patterns are exact.
 - **A process can change while it is scanned** — regions can appear,
   disappear or be rewritten mid-scan; a hit is a snapshot of one
-  moment, not proof the bytes are still there.
+  moment, not proof the bytes are still there. v1.3 detects it: the
+  map is re-read after every scan and the report says when it
+  changed (text summary line, JSON `map_changed` field).
 - **Windows/macOS live testing still needed** — the backends are
   covered by mocked tests; a real Windows run and a real Mac run are
   the remaining verification (see the platform matrix).
+- **Image mode is a flat byte scan, not profiled analysis** — the
+  `--image` mode scans a raw dump with the same rules; it does not
+  do Volatility-style OS-profile analysis (process lists, kernel
+  structures, plugins). That needs a Volatility-scale profiler, not
+  a single-file stdlib tool.
+- **No container/VM boundary crossing** — by design: the tool reads
+  processes on its own machine only; reading inside a container or
+  another VM needs a tool running inside that boundary.
 
 ## Legal
 
