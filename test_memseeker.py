@@ -402,9 +402,13 @@ def step7():
                   all(f"0x{h.offset:x}" in body for h in result.hits))
             check("full: text report carries the defensive lesson",
                   "Defensive lesson" in body)
+            check("full: text report carries the disclaimer",
+                  memseeker.DISCLAIMER in body)
             js = os.path.join(td, "report.json")
             memseeker.write_report(result, rules, js, as_json=True)
             data = json.load(open(js))
+            check("full: JSON report carries the disclaimer field",
+                  data.get("disclaimer") == memseeker.DISCLAIMER)
             check("full: JSON report parses and has 5 hits",
                   len(data["hits"]) == 5)
             check("full: JSON report has region + offset per hit",
@@ -1001,8 +1005,11 @@ def step_cli_bits():
                    "ApiKeyPattern", "StraddleMarker")),
           r.stdout[:200])
     r = run_tool(["--version"])
-    check("cli: --version prints 1.1", "1.1" in r.stdout)
+    check("cli: --version prints 1.2", "1.2" in r.stdout)
     r = run_tool(["--doctor", "--no-color"])
+    check("cli: banner shows the authorized-use disclaimer",
+          "DISCLAIMER" in r.stdout
+          and "on your own responsibility" in r.stdout, r.stdout[:200])
     check("cli: doctor passes on this machine",
           r.returncode == 0 and "all good" in r.stdout,
           r.stdout.strip().splitlines()[-1] if r.stdout else "")

@@ -11,7 +11,7 @@ tool looks where the disk never sees. It only ever **reads** memory;
 it never writes to another process.
 
 - **Author:** CyberBoy50
-- **Version:** 1.1
+- **Version:** 1.2
 - **Platform:** Linux, Windows and macOS (see the platform matrix
   below). The project spec is Linux — the PDF asked for a Linux tool —
   and the Windows/macOS backends are added on top of that spec, not
@@ -42,6 +42,12 @@ It then:
 5. **Reports each hit** with the rule name, region name, offset inside
    the region, absolute address and surrounding context bytes.
 6. **Saves the report** to a file (text, or JSON with `--json`).
+
+v1.2 change (text only — no detection logic changed): an explicit
+authorized-use responsibility disclaimer is now shown in the banner
+and carried in every generated report (text header and JSON
+`disclaimer` field). See the Legal section below for the exact
+wording.
 
 v1.1 additions:
 
@@ -310,7 +316,7 @@ See `DEMO.md` for the full run.
 python run.py test
 ```
 
-118 checks, all passing — one function per PDF build-plan step
+121 checks, all passing — one function per PDF build-plan step
 (Steps 1–7) plus Step 8 for the stretch items (entropy, strings,
 watch), the CLI bits (`--map`, `--list-rules`, `--version`, doctor),
 Step 9 for the v1.1 features (multi-PID, image, dump, groups) and
@@ -323,7 +329,7 @@ See `STEP_BY_STEP_GUIDE.md` for what each step proves.
 |---|---|
 | `memseeker.py` | The tool itself — scanning, rules, reports, menu |
 | `lab_proc.py` | The lab process — holds planted markers, then sleeps |
-| `test_memseeker.py` | Step tests (118 checks) |
+| `test_memseeker.py` | Step tests (121 checks) |
 | `run.py` | Launcher — setup, lab, scan, scanall, image, labscan, test, doctor, menu |
 | `run.sh` / `run.bat` | One-click launchers (macOS/Linux, Windows) |
 | `rules_lab.txt` | Rules for the lab markers |
@@ -367,3 +373,8 @@ person's process memory without permission is unauthorized access
 (Prevention of Electronic Crimes Act, 2016, Pakistan). The tool
 refuses other users' processes on purpose, and it never writes to
 another process.
+
+The tool states this responsibility explicitly, in the banner and in
+every report it writes:
+
+> DISCLAIMER — AUTHORIZED USE ONLY. This tool was built for ethical, authorized security testing only. You are using it on your own responsibility. The authors are not responsible for how you use it, or for anything that happens because of your use. Only test systems, code, and data you own or have explicit written permission to test — testing anything else may be illegal (for example, PECA 2016 in Pakistan).

@@ -116,9 +116,21 @@ import time
 from collections import Counter
 from datetime import datetime
 
-VERSION = "1.1"
+VERSION = "1.2"
 AUTHOR = "CyberBoy50"
 QUIET = False
+
+# Explicit responsibility disclaimer — shown in the banner, in every
+# generated report (text header + JSON "disclaimer" field) and in the
+# README. Wording is fixed; do not paraphrase it.
+DISCLAIMER = (
+    "DISCLAIMER — AUTHORIZED USE ONLY. This tool was built for ethical, "
+    "authorized security testing only. You are using it on your own "
+    "responsibility. The authors are not responsible for how you use it, "
+    "or for anything that happens because of your use. Only test systems, "
+    "code, and data you own or have explicit written permission to test — "
+    "testing anything else may be illegal (for example, PECA 2016 in "
+    "Pakistan).")
 
 # Tunables (change here, nowhere else).
 DEFAULT_CHUNK_SIZE = 65536      # 64 KiB per read — a region never loads whole
@@ -209,6 +221,15 @@ BANNER = r"""
 
               by CyberBoy50
         MEMORY SCANNER  |  AUTHORIZED USE ONLY
+ --------------------------------------------------
+  DISCLAIMER — AUTHORIZED USE ONLY. This tool was built
+  for ethical, authorized security testing only. You
+  are using it on your own responsibility. The authors
+  are not responsible for how you use it, or for
+  anything that happens because of your use. Only test
+  systems, code, and data you own or have explicit
+  written permission to test — testing anything else
+  may be illegal (for example, PECA 2016 in Pakistan).
  ==================================================
 """
 
@@ -1652,7 +1673,8 @@ def _report_header(started):
             "MemSeeker — Process Memory Scan Report",
             "=" * 58,
             f"Tool:      MemSeeker v{VERSION} by {AUTHOR}",
-            f"Date:      {started:%Y-%m-%d %H:%M:%S}"]
+            f"Date:      {started:%Y-%m-%d %H:%M:%S}",
+            f"Disclaimer: {DISCLAIMER}"]
 
 
 def _summary_lines(result, rules, include_identity=True):
@@ -1765,6 +1787,7 @@ def result_to_dict(result, rules):
     d = {
         "tool": f"MemSeeker v{VERSION}",
         "author": AUTHOR,
+        "disclaimer": DISCLAIMER,
         "date": result.started.strftime("%Y-%m-%d %H:%M:%S"),
         "pid": result.pid,
         "process": result.proc_name,
@@ -1803,6 +1826,7 @@ def build_multi_json_report(results, skipped, rules):
     return json.dumps({
         "tool": f"MemSeeker v{VERSION}",
         "author": AUTHOR,
+        "disclaimer": DISCLAIMER,
         "date": (results[0].started if results else datetime.now()
                  ).strftime("%Y-%m-%d %H:%M:%S"),
         "mode": "multi-process",
