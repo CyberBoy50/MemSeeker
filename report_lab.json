@@ -1,0 +1,166 @@
+{
+  "tool": "MemSeeker v1.0",
+  "author": "CyberBoy50",
+  "date": "2026-11-25 16:33:38",
+  "pid": 11118,
+  "process": "python3",
+  "rules_file": "/home/hatch/workspace/memseeker/rules_lab.txt",
+  "rules": [
+    "MemMarkerAlpha",
+    "LeakedPassword",
+    "InjectedBytes",
+    "ApiKeyPattern",
+    "StraddleMarker"
+  ],
+  "chunk_size": 65536,
+  "regions_total": 61,
+  "regions_read": 58,
+  "regions_skipped": [
+    {
+      "region": "[vvar]",
+      "range": "749b12256000-749b1225a000",
+      "reason": "[Errno 5] Input/output error"
+    },
+    {
+      "region": "[vvar_vclock]",
+      "range": "749b1225a000-749b1225c000",
+      "reason": "[Errno 5] Input/output error"
+    }
+  ],
+  "bytes_read": 17866752,
+  "seconds": 0.927,
+  "hits": [
+    {
+      "rule": "MemMarkerAlpha",
+      "rule_type": "string",
+      "region": "[anon]",
+      "region_range": "749b11c46000-749b11ea8000",
+      "address": "0x749b11dc3fd0",
+      "offset": 1564624,
+      "offset_hex": "0x17dfd0",
+      "match_hex": "4d 45 4d 53 45 45 4b 45 52 5f 4d 41 52 4b 45 52 5f 41 4c 50 48 41",
+      "match_ascii": "MEMSEEKER_MARKER_ALPHA",
+      "context_before_hex": "4c 45 5f 4d 41 52 4b 45 52 00 f0 11 6c d2 01 00",
+      "context_after_hex": "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "context_ascii": "LE_MARKER...l...MEMSEEKER_MARKER_ALPHA................",
+      "strings": [
+        "MEMSEEKER_STRADDLE_MARKER",
+        "MEMSEEKER_MARKER_ALPHA"
+      ]
+    },
+    {
+      "rule": "ApiKeyPattern",
+      "rule_type": "regex",
+      "region": "[anon]",
+      "region_range": "749b11c46000-749b11ea8000",
+      "address": "0x749b11dc3d90",
+      "offset": 1564048,
+      "offset_hex": "0x17dd90",
+      "match_hex": "73 6b 2d 41 42 43 44 45 46 47 48 31 32 33 34 35 36 37 38 58 59 5a 41 42 43 44 45",
+      "match_ascii": "sk-ABCDEFGH12345678XYZABCDE",
+      "context_before_hex": "08 00 00 00 00 00 00 00 20 18 5d 09 00 00 00 00",
+      "context_after_hex": "00 9b 74 00 00 01 00 00 00 00 00 00 00 20 bf a3",
+      "context_ascii": "........ .].....sk-ABCDEFGH12345678XYZABCDE..t.......... ..",
+      "strings": [
+        "sk-ABCDEFGH12345678XYZABCDE"
+      ]
+    },
+    {
+      "rule": "StraddleMarker",
+      "rule_type": "string",
+      "region": "[anon]",
+      "region_range": "749b11c46000-749b11ea8000",
+      "address": "0x749b11dc3fb0",
+      "offset": 1564592,
+      "offset_hex": "0x17dfb0",
+      "match_hex": "4d 45 4d 53 45 45 4b 45 52 5f 53 54 52 41 44 44 4c 45 5f 4d 41 52 4b 45 52",
+      "match_ascii": "MEMSEEKER_STRADDLE_MARKER",
+      "context_before_hex": "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "context_after_hex": "00 f0 11 6c d2 01 00 4d 45 4d 53 45 45 4b 45 52",
+      "context_ascii": "................MEMSEEKER_STRADDLE_MARKER...l...MEMSEEKER",
+      "strings": [
+        "MEMSEEKER_STRADDLE_MARKER",
+        "MEMSEEKER_MARKER_ALPHA"
+      ]
+    },
+    {
+      "rule": "LeakedPassword",
+      "rule_type": "string",
+      "region": "[anon]",
+      "region_range": "749b11c46000-749b11ea8000",
+      "address": "0x749b11e20690",
+      "offset": 1943184,
+      "offset_hex": "0x1da690",
+      "match_hex": "68 75 6e 74 65 72 32",
+      "match_ascii": "hunter2",
+      "context_before_hex": "de ad be ef 00 11 22 33 00 af b1 11 9b 74 00 00",
+      "context_after_hex": "00 30 9a b3 00 00 00 00 00 00 07 e2 11 9b 74 00",
+      "context_ascii": "......\"3.....t..hunter2.0............t.",
+      "strings": [
+        "_json.Scanner",
+        "_json.Encoder",
+        "hunter2",
+        "sk-ABCDEF1234"
+      ]
+    },
+    {
+      "rule": "InjectedBytes",
+      "rule_type": "hex",
+      "region": "[anon]",
+      "region_range": "749b11c46000-749b11ea8000",
+      "address": "0x749b11e20680",
+      "offset": 1943168,
+      "offset_hex": "0x1da680",
+      "match_hex": "de ad be ef 00 11 22 33",
+      "match_ascii": "......\"3",
+      "context_before_hex": "f0 60 cf 11 9b 74 00 00 d0 c6 b3 00 00 00 00 00",
+      "context_after_hex": "00 af b1 11 9b 74 00 00 68 75 6e 74 65 72 32 00",
+      "context_ascii": ".`...t................\"3.....t..hunter2.",
+      "strings": [
+        "_json.Scanner",
+        "_json.Encoder",
+        "hunter2",
+        "sk-ABCDEF1234"
+      ]
+    }
+  ],
+  "hits_per_rule": {
+    "MemMarkerAlpha": 1,
+    "ApiKeyPattern": 1,
+    "StraddleMarker": 1,
+    "LeakedPassword": 1,
+    "InjectedBytes": 1
+  },
+  "entropy_flags": [
+    {
+      "region": "[anon]",
+      "range": "749b11a7d000-749b11abe000",
+      "chunk_address": "0x749b11a7d000",
+      "entropy_bits_per_byte": 8.0
+    },
+    {
+      "region": "[anon]",
+      "range": "749b11a7d000-749b11abe000",
+      "chunk_address": "0x749b11a8d000",
+      "entropy_bits_per_byte": 8.0
+    },
+    {
+      "region": "[anon]",
+      "range": "749b11a7d000-749b11abe000",
+      "chunk_address": "0x749b11a9d000",
+      "entropy_bits_per_byte": 8.0
+    },
+    {
+      "region": "[anon]",
+      "range": "749b11a7d000-749b11abe000",
+      "chunk_address": "0x749b11aad000",
+      "entropy_bits_per_byte": 8.0
+    },
+    {
+      "region": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "range": "749b121ef000-749b12247000",
+      "chunk_address": "0x749b1221f000",
+      "entropy_bits_per_byte": 7.51
+    }
+  ]
+}

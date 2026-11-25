@@ -1,0 +1,34 @@
+# MemSeeker lab rules — matches the markers planted by lab_proc.py.
+# Format: one [RuleName] section per rule.
+#   type = string | hex | regex
+#   pattern = the pattern to hunt for
+#   description = optional, shown in the report
+#
+#   string: plain bytes, matched exactly (case-sensitive).
+#   hex:    byte pairs, spaces allowed — "de ad be ef".
+#   regex:  a regular expression, matched against the raw bytes.
+
+[MemMarkerAlpha]
+type = string
+pattern = MEMSEEKER_MARKER_ALPHA
+description = Planted lab marker (plain string)
+
+[LeakedPassword]
+type = string
+pattern = hunter2
+description = Plaintext password left in process memory
+
+[InjectedBytes]
+type = hex
+pattern = de ad be ef 00 11 22 33
+description = Known injected marker bytes
+
+[ApiKeyPattern]
+type = regex
+pattern = sk-[A-Za-z0-9]{20,}
+description = API key pattern (sk- followed by 20+ characters)
+
+[StraddleMarker]
+type = string
+pattern = MEMSEEKER_STRADDLE_MARKER
+description = Planted lab marker for the chunk-boundary test

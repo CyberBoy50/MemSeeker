@@ -1,0 +1,47 @@
+# MemSeeker default rules — common secrets and suspicious patterns.
+# Use these on a real process you own (or the lab) to hunt for leaked
+# secrets in memory. Edit freely: add a [RuleName] section per pattern.
+#
+#   type = string | hex | regex
+#   pattern = the pattern to hunt for
+#   description = optional, shown in the report
+
+[PasswordAssign]
+type = regex
+pattern = (?i)password\s*=\s*[^\s"']{4,}
+description = A password assigned in plaintext
+
+[ApiKeyAssign]
+type = regex
+pattern = (?i)(api[_-]?key|apikey)\s*[:=]\s*[A-Za-z0-9_\-]{8,}
+description = An API key assigned in plaintext
+
+[PrivateKeyHeader]
+type = string
+pattern = -----BEGIN RSA PRIVATE KEY-----
+description = An RSA private key sitting in memory
+
+[PrivateKeyHeaderEC]
+type = string
+pattern = -----BEGIN PRIVATE KEY-----
+description = A private key sitting in memory
+
+[AWSAccessKey]
+type = regex
+pattern = AKIA[0-9A-Z]{16}
+description = An AWS access key ID
+
+[BearerToken]
+type = regex
+pattern = (?i)Bearer [A-Za-z0-9_\-\.]{20,}
+description = A bearer token in an Authorization header
+
+[SecretWord]
+type = regex
+pattern = (?i)(secret|passwd|pwd)\s*[:=]\s*[^\s"']{4,}
+description = A secret or password value in plaintext
+
+[HexMarkerDeadBeef]
+type = hex
+pattern = de ad be ef
+description = Classic injected-marker bytes
